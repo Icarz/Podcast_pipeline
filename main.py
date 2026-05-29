@@ -10,6 +10,7 @@ import os
 
 from dotenv import load_dotenv
 
+import config
 from modules import (
     ai_extract,
     instagram_publish,
@@ -23,11 +24,13 @@ from modules import (
 
 load_dotenv()
 
+os.makedirs(config.LOGS_DIR, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler(os.path.join("logs", "pipeline.log")),
+        logging.FileHandler(config.LOG_FILE),
         logging.StreamHandler(),
     ],
 )
@@ -59,7 +62,19 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Podcast automation pipeline")
-    parser.add_argument("feed_url", help="Podcast RSS feed URL")
+    parser.add_argument(
+        "feed",
+        nargs="?",
+        default=config.DEFAULT_FEED,
+        help=(
+            "Feed name (one of: "
+            + ", ".join(config.PODCAST_FEEDS)
+            + ") or a raw RSS URL. Defaults to "
+            + config.DEFAULT_FEED
+        ),
+    )
     args = parser.parse_args()
 
-    run(args.feed_url)
+    # Resolve a known feed name to its URL; otherwise treat the arg as a URL.
+    feed_url = config.PODCAST_FEEDS.get(args.feed, args.feed)
+    run(feed_url)
