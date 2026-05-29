@@ -48,7 +48,9 @@ def run(feed_url: str) -> None:
     highlights = ai_extract.extract_highlights(transcript)
 
     slides = slide_gen.build_slides(highlights)
-    video_path = video_gen.build_video(audio_path, slides, highlights)
+    video_path = video_gen.build_video(
+        audio_path, transcript["words"], highlights, podcast_name=episode.get("show_title", "")
+    )
 
     asset_url = storage.upload(video_path)
 
