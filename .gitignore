@@ -1,0 +1,30 @@
+# Virtual environment
+venv/
+.venv/
+
+# Environment / secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Pipeline artifacts
+output/videos/*
+output/slides/*
+tmp/*
+logs/*
+
+# Keep folder structure
+!output/videos/.gitkeep
+!output/slides/.gitkeep
+!tmp/.gitkeep
+!logs/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,11 @@
+yt-dlp
+groq
+anthropic
+moviepy
+Pillow
+boto3
+google-api-python-client
+google-auth-oauthlib
+requests
+python-dotenv
+feedparser
