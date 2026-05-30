@@ -29,10 +29,14 @@ SYSTEM_PROMPT = (
     '  "best_quote"  : string — the most quotable verbatim line from the transcript.\n'
     '  "title"       : string — a punchy video title (<= 80 chars).\n'
     '  "clip_start"  : number — MUST be the exact start timestamp of one of the '
-    "segments in the provided list.\n"
+    "segments in the provided list, AND must fall at the BEGINNING of a complete "
+    "thought (the start of a sentence or idea), never mid-sentence.\n"
     '  "clip_end"    : number — MUST be the exact end timestamp of a LATER segment '
-    "in the list. The window (clip_end - clip_start) MUST be between "
-    f"{config.CLIP_WINDOW_MIN_SECONDS} and {config.CLIP_WINDOW_MAX_SECONDS} seconds.\n"
+    "in the list, AND must fall at the END of a complete thought or conclusion. "
+    "The clip MUST contain a full, self-contained idea WITH its payoff. NEVER cut "
+    "off mid-sentence, and NEVER end on a setup/cliffhanger such as \"...this is "
+    "what I want you to do\" or \"...here's the thing\" without the actual point "
+    "that follows. The last segment must deliver the resolution, not tee it up.\n"
     '  "hashtags"    : array of strings — 3 to 8 relevant hashtags, each '
     'starting with "#".\n'
     '  "image_prompts": array of exactly 4 strings — cinematic visual '
@@ -51,6 +55,16 @@ SYSTEM_PROMPT = (
     'trail", "morning coffee desk", "gym workout dark". Keep them concrete and '
     "visual, NOT abstract concepts. They should match the same themes as the "
     "image_prompts.\n\n"
+    "Clip length: aim for a window of "
+    f"{config.CLIP_WINDOW_MIN_SECONDS}-{config.CLIP_WINDOW_MAX_SECONDS} seconds. "
+    "You may run slightly longer, but (clip_end - clip_start) MUST NEVER exceed "
+    f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds under ANY circumstances. "
+    "Within that hard limit, COMPLETENESS BEATS EXACT LENGTH: prefer a contiguous "
+    "run of segments that forms a complete mini-story or a complete piece of "
+    "advice (setup AND payoff) over hitting a precise duration. If a complete "
+    f"thought will not fit within {config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds, "
+    "pick a SHORTER self-contained thought that does fit — do NOT exceed the "
+    "limit to capture a longer passage.\n\n"
     "The transcript is given as timestamped segments, one per line, formatted "
     "[start-end] text. Choose a contiguous run of segments that forms a "
     "self-contained, compelling moment, and set clip_start to that run's first "
@@ -123,12 +137,66 @@ def _validate(data: dict) -> None:
         raise ValueError("'search_queries' must be non-empty strings")
 
     window = data["clip_end"] - data["clip_start"]
-    lo, hi = config.CLIP_WINDOW_MIN_SECONDS, config.CLIP_WINDOW_MAX_SECONDS
+    lo, hi = config.CLIP_WINDOW_MIN_SECONDS, config.CLIP_WINDOW_MAX_HARD_SECONDS
     if not (lo <= window <= hi):
         raise ValueError(
             f"clip window {window:.1f}s outside allowed range [{lo}, {hi}]s "
             f"(start={data['clip_start']}, end={data['clip_end']})"
         )
+
+
+_SENTENCE_END = (".", "!", "?")
+
+
+def _ends_sentence(word: str) -> bool:
+    """True if a word token ends a sentence (terminal punctuation, ignoring
+    any trailing quote/bracket characters)."""
+    return word.rstrip("\"')]}").endswith(_SENTENCE_END)
+
+
+def _snap_to_sentences(data: dict, words: list) -> None:
+    """Snap clip_start/clip_end onto real sentence boundaries (in place).
+
+    Groq Whisper word tokens carry punctuation, so we snap to word timestamps at
+    sentence edges rather than to coarse Whisper *segment* edges (which routinely
+    fall mid-sentence and would leave the clip ending on a cliffhanger).
+
+    clip_start -> the start time of the nearest sentence-opening word.
+    clip_end   -> the end time of the nearest sentence-closing word.
+
+    Because both targets are word boundaries, the clip never cuts a word in half;
+    because they are sentence edges, it never opens or ends mid-thought.
+    """
+    ws = [
+        w for w in words
+        if w.get("start") is not None and w.get("end") is not None and (w.get("word") or "").strip()
+    ]
+    if not ws:
+        return
+
+    # End times of words that close a sentence.
+    end_times = [w["end"] for w in ws if _ends_sentence(w["word"])]
+    # Start times of words that open a sentence (first word, or after a closer).
+    start_times = [ws[0]["start"]] + [
+        ws[i]["start"] for i in range(1, len(ws)) if _ends_sentence(ws[i - 1]["word"])
+    ]
+    if not end_times or not start_times:
+        return
+
+    cs, ce = data["clip_start"], data["clip_end"]
+    new_start = min(start_times, key=lambda t: abs(t - cs))
+    new_end = min(end_times, key=lambda t: abs(t - ce))
+
+    # Guard against a degenerate snap (end at/before start): fall back to raw end.
+    if new_end <= new_start:
+        new_end = ce
+
+    if (new_start, new_end) != (cs, ce):
+        logger.info(
+            "Snapped clip to sentence boundaries: %.2f-%.2f -> %.2f-%.2f",
+            cs, ce, new_start, new_end,
+        )
+    data["clip_start"], data["clip_end"] = new_start, new_end
 
 
 def _format_segments(segments: list) -> str:
@@ -179,6 +247,18 @@ def extract_highlights(transcript: dict) -> dict:
     raw = next((b.text for b in response.content if b.type == "text"), "")
     parsed = json.loads(_strip_to_json(raw))
     _validate(parsed)
+
+    # Snap onto real sentence boundaries so the clip never cuts a word in half
+    # and never opens/ends mid-thought.
+    words = transcript.get("words") if isinstance(transcript, dict) else None
+    if words:
+        _snap_to_sentences(parsed, words)
+        window = parsed["clip_end"] - parsed["clip_start"]
+        if window > config.CLIP_WINDOW_MAX_HARD_SECONDS:
+            logger.warning(
+                "Snapped clip window %.1fs exceeds hard max %ds",
+                window, config.CLIP_WINDOW_MAX_HARD_SECONDS,
+            )
 
     logger.info("Extracted clip: %.1f-%.1fs | title=%r", parsed["clip_start"], parsed["clip_end"], parsed["title"])
     return parsed

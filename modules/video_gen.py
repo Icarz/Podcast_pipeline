@@ -350,7 +350,11 @@ def build_video(
                 color=config.WATERMARK_COLOR,
             ).with_duration(window)
             ww, wh = wm.size
-            wm = wm.with_position((w - margin - ww, h - margin - wh))
+            # Bottom edge at WATERMARK_BASELINE_Y (clear padding below); clamp x
+            # so the full text never runs off the left even if it's wide.
+            wm_x = max(margin, w - margin - ww)
+            wm_y = config.WATERMARK_BASELINE_Y - wh
+            wm = wm.with_position((wm_x, wm_y))
             layers.append(wm)
 
         video = CompositeVideoClip(layers, size=(w, h)).with_audio(clip_audio).with_duration(window)

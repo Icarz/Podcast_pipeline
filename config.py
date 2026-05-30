@@ -54,9 +54,13 @@ MAX_CLIPS_PER_EPISODE = 5
 # Using its drop-in replacement, the current Sonnet.
 EXTRACT_MODEL = "claude-sonnet-4-6"
 EXTRACT_MAX_TOKENS = 2000
-# Target clip window the model must pick, in seconds.
+# Target clip window the model should aim for, in seconds.
 CLIP_WINDOW_MIN_SECONDS = 45
 CLIP_WINDOW_MAX_SECONDS = 65
+# Hard upper bound: the model may run longer than the target ONLY to finish a
+# complete thought (completeness beats exact length). Snapping clip_end to a
+# segment boundary can also push past the target, so validation allows up to here.
+CLIP_WINDOW_MAX_HARD_SECONDS = 75
 
 # --- Slide dimensions (pixels) ---
 # Vertical 9:16 for Reels/Shorts; switch to 1920x1080 for landscape YouTube.
@@ -113,7 +117,7 @@ CAPTION_STROKE_COLOR = (0, 0, 0)         # black outline
 CAPTION_STROKE_WIDTH = 8
 CAPTION_WORDS_PER_GROUP = 5              # max words shown at once
 CAPTION_GROUP_GAP = 0.7                  # a pause longer than this starts a new group
-CAPTION_CENTER_Y = 0.80                  # vertical center of the caption block (lower 35%)
+CAPTION_CENTER_Y = 0.62                  # vertical center of caption block; kept above the Reels/Shorts bottom UI
 CAPTION_LINE_SPACING = 1.2
 
 # Hook text (top of frame, first few seconds only).
@@ -122,6 +126,8 @@ HOOK_COLOR = "white"
 HOOK_DURATION = 3.0                  # seconds
 HOOK_TOP = 0.08                      # fraction of height
 
-# Podcast-name watermark (bottom-right, muted).
+# Podcast-name watermark (right side, muted). Kept well inside the safe area —
+# the bottom of the text sits at WATERMARK_BASELINE_Y so there's clear padding below.
 WATERMARK_FONT_SIZE = 34
 WATERMARK_COLOR = (160, 160, 160)
+WATERMARK_BASELINE_Y = 1700              # px (of 1920): bottom edge of the watermark text
