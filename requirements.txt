@@ -1,6 +1,7 @@
 yt-dlp
 groq
 anthropic
+google-genai
 moviepy
 Pillow
 boto3

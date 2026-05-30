@@ -34,7 +34,23 @@ SYSTEM_PROMPT = (
     "in the list. The window (clip_end - clip_start) MUST be between "
     f"{config.CLIP_WINDOW_MIN_SECONDS} and {config.CLIP_WINDOW_MAX_SECONDS} seconds.\n"
     '  "hashtags"    : array of strings — 3 to 8 relevant hashtags, each '
-    'starting with "#".\n\n'
+    'starting with "#".\n'
+    '  "image_prompts": array of exactly 4 strings — cinematic visual '
+    "descriptions for AI-generated vertical 9:16 background images that match "
+    "the episode's theme and mood.\n"
+    '  "search_queries": array of exactly 4 strings — short stock-footage '
+    "search terms (2-4 words each) for finding matching background video.\n\n"
+    "Style guidance for image_prompts: realistic lifestyle and cinematic "
+    "environments — people in motion, cities at golden hour, gyms, workspaces "
+    "with natural light, silhouettes, wide establishing shots. AVOID tight face "
+    "close-ups. Each prompt must be vivid, specific, and self-contained "
+    "(describe the scene, lighting, mood, and framing), suitable as a darkened "
+    "background behind bold captions in a vertical 9:16 video.\n\n"
+    "Style guidance for search_queries: concrete, visual, lifestyle stock-"
+    'footage phrases of 2-4 words, e.g. "city sunrise aerial", "person running '
+    'trail", "morning coffee desk", "gym workout dark". Keep them concrete and '
+    "visual, NOT abstract concepts. They should match the same themes as the "
+    "image_prompts.\n\n"
     "The transcript is given as timestamped segments, one per line, formatted "
     "[start-end] text. Choose a contiguous run of segments that forms a "
     "self-contained, compelling moment, and set clip_start to that run's first "
@@ -75,6 +91,8 @@ def _validate(data: dict) -> None:
         "clip_start": (int, float),
         "clip_end": (int, float),
         "hashtags": list,
+        "image_prompts": list,
+        "search_queries": list,
     }
     for key, expected_type in required.items():
         if key not in data:
@@ -87,6 +105,22 @@ def _validate(data: dict) -> None:
 
     if len(data["insights"]) != 3:
         raise ValueError(f"'insights' must have exactly 3 items, got {len(data['insights'])}")
+
+    if len(data["image_prompts"]) != config.IMAGE_PROMPT_COUNT:
+        raise ValueError(
+            f"'image_prompts' must have exactly {config.IMAGE_PROMPT_COUNT} items, "
+            f"got {len(data['image_prompts'])}"
+        )
+    if not all(isinstance(p, str) and p.strip() for p in data["image_prompts"]):
+        raise ValueError("'image_prompts' must be non-empty strings")
+
+    if len(data["search_queries"]) != config.SEARCH_QUERY_COUNT:
+        raise ValueError(
+            f"'search_queries' must have exactly {config.SEARCH_QUERY_COUNT} items, "
+            f"got {len(data['search_queries'])}"
+        )
+    if not all(isinstance(q, str) and q.strip() for q in data["search_queries"]):
+        raise ValueError("'search_queries' must be non-empty strings")
 
     window = data["clip_end"] - data["clip_start"]
     lo, hi = config.CLIP_WINDOW_MIN_SECONDS, config.CLIP_WINDOW_MAX_SECONDS

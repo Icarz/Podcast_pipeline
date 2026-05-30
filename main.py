@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 import config
 from modules import (
     ai_extract,
+    background,
     instagram_publish,
     rss_ingest,
     slide_gen,
@@ -48,8 +49,13 @@ def run(feed_url: str) -> None:
     highlights = ai_extract.extract_highlights(transcript)
 
     slides = slide_gen.build_slides(highlights)
+    backgrounds = background.select_backgrounds(highlights)
     video_path = video_gen.build_video(
-        audio_path, transcript["words"], highlights, podcast_name=episode.get("show_title", "")
+        audio_path,
+        transcript["words"],
+        highlights,
+        podcast_name=episode.get("show_title", ""),
+        background_images=backgrounds,
     )
 
     asset_url = storage.upload(video_path)

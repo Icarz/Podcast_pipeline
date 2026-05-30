@@ -1,0 +1,177 @@
+"""Pexels stock video backgrounds (primary background source).
+
+For each stock-footage search query from :mod:`ai_extract`, queries the Pexels
+video search API, picks the best vertical (9:16-ish) file, and downloads it to
+``tmp/bg_<n>.mp4`` for :mod:`video_gen`.
+
+Resilience:
+  * per-query orientation fallback (portrait -> square -> landscape),
+  * exponential backoff on 429 (Pexels free tier = 200 requests/hour),
+  * per-file caching (an existing ``bg_<n>.mp4`` is reused),
+  * returns ``None`` if Pexels yields nothing at all, so the caller can fall
+    back to the Gemini -> gradient chain.
+"""
+
+import logging
+import os
+import time
+
+import requests
+from dotenv import load_dotenv
+
+import config
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+_TARGET_RATIO = config.SLIDE_HEIGHT / config.SLIDE_WIDTH  # 1920/1080 ~= 1.778
+
+
+def _api_key() -> str | None:
+    return os.environ.get("PEXELS_API_KEY")
+
+
+def _request(query: str, orientation: str) -> dict | None:
+    """One Pexels search call with backoff on 429; returns parsed JSON or None."""
+    headers = {"Authorization": _api_key()}
+    params = {
+        "query": query,
+        "orientation": orientation,
+        "size": config.PEXELS_SIZE,
+        "per_page": config.PEXELS_PER_PAGE,
+    }
+    for attempt in range(len(config.PEXELS_BACKOFFS) + 1):
+        try:
+            resp = requests.get(
+                config.PEXELS_SEARCH_URL,
+                headers=headers,
+                params=params,
+                timeout=config.PEXELS_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            logger.warning("Pexels request error for %r (%s); aborting query", query, exc)
+            return None
+
+        if resp.status_code == 429:
+            if attempt < len(config.PEXELS_BACKOFFS):
+                wait = config.PEXELS_BACKOFFS[attempt]
+                logger.warning("Pexels rate-limited (429) for %r, retry in %ds", query, wait)
+                time.sleep(wait)
+                continue
+            logger.warning("Pexels still 429 for %r after retries; giving up", query)
+            return None
+
+        if resp.status_code != 200:
+            logger.warning("Pexels HTTP %d for %r (%s)", resp.status_code, query, orientation)
+            return None
+
+        return resp.json()
+    return None
+
+
+def _best_vertical_file(video: dict) -> str | None:
+    """Pick the download URL of the file whose aspect ratio is closest to 9:16.
+
+    Prefers files at least 1080px tall; falls back to the tallest available.
+    """
+    files = [f for f in video.get("video_files", []) if f.get("link") and f.get("height")]
+    if not files:
+        return None
+
+    def score(f):
+        w, h = f.get("width") or 1, f.get("height") or 1
+        ratio_err = abs((h / w) - _TARGET_RATIO)
+        too_short = 0 if h >= config.SLIDE_HEIGHT else 1  # prefer >= 1080 tall
+        return (too_short, ratio_err, -h)
+
+    return min(files, key=score)["link"]
+
+
+def _find_video_url(query: str) -> str | None:
+    """Search ``query`` across orientations until a usable video is found."""
+    for orientation in config.PEXELS_ORIENTATIONS:
+        data = _request(query, orientation)
+        if not data:
+            continue
+        for video in data.get("videos", []):
+            url = _best_vertical_file(video)
+            if url:
+                logger.info("Pexels match for %r (%s): video %s", query, orientation, video.get("id"))
+                return url
+    logger.warning("No Pexels video found for %r in any orientation", query)
+    return None
+
+
+def _download(url: str, path: str) -> bool:
+    """Stream ``url`` to ``path``; return True on success."""
+    try:
+        with requests.get(url, stream=True, timeout=config.PEXELS_TIMEOUT) as resp:
+            resp.raise_for_status()
+            with open(path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1 << 16):
+                    if chunk:
+                        f.write(chunk)
+        return os.path.getsize(path) > 0
+    except (requests.RequestException, OSError) as exc:
+        logger.warning("Failed to download %s (%s)", os.path.basename(path), exc)
+        if os.path.exists(path):
+            os.remove(path)
+        return False
+
+
+def fetch_backgrounds(queries: list[str], out_dir: str = None, force: bool = False) -> list[str] | None:
+    """Download one stock video per query; return paths, or None if all fail.
+
+    Files go to ``out_dir/bg_<n>.mp4`` (1-indexed). Existing files are reused
+    unless ``force`` is True. Queries that yield nothing are skipped; if *every*
+    query fails (and nothing was cached), returns None so the caller can fall
+    back to image/gradient backgrounds.
+    """
+    if not _api_key():
+        logger.info("PEXELS_API_KEY not set; skipping Pexels backgrounds")
+        return None
+
+    out_dir = out_dir or config.TMP_DIR
+    os.makedirs(out_dir, exist_ok=True)
+
+    paths: list[str] = []
+    for i, query in enumerate(queries, start=1):
+        path = os.path.join(out_dir, f"{config.BG_IMAGE_PREFIX}{i}.mp4")
+
+        if not force and os.path.exists(path) and os.path.getsize(path) > 0:
+            logger.info("Pexels background cached, skipping: %s", os.path.basename(path))
+            paths.append(path)
+            continue
+
+        url = _find_video_url(query)
+        if url and _download(url, path):
+            logger.info("Downloaded Pexels background: %s", os.path.basename(path))
+            paths.append(path)
+
+    if not paths:
+        logger.warning("Pexels returned no usable backgrounds")
+        return None
+    return paths
+
+
+if __name__ == "__main__":
+    import glob
+    import json
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+    plans = sorted(glob.glob(os.path.join(config.TMP_DIR, "*.plan.json")), key=os.path.getmtime, reverse=True)
+    if not plans:
+        raise SystemExit(f"No *.plan.json found in {config.TMP_DIR} - run the pipeline once first.")
+    with open(plans[0], encoding="utf-8") as f:
+        queries = json.load(f)["highlights"].get("search_queries", [])
+    print(f"Queries: {queries}\n", flush=True)
+
+    out = fetch_backgrounds(queries, force=True)
+    if out is None:
+        print("Pexels failed entirely -> caller should fall back.")
+    else:
+        print(f"\nDownloaded {len(out)} stock video(s):")
+        for p in out:
+            print(f"  {p}  ({os.path.getsize(p) / (1024 * 1024):.2f} MB)")

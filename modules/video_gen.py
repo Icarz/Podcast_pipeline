@@ -15,7 +15,15 @@ import os
 import re
 
 import numpy as np
-from moviepy import AudioFileClip, CompositeVideoClip, ImageClip, TextClip
+from moviepy import (
+    AudioFileClip,
+    ColorClip,
+    CompositeVideoClip,
+    ImageClip,
+    TextClip,
+    VideoFileClip,
+    vfx,
+)
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 import config
@@ -69,6 +77,111 @@ def _make_background(window: float) -> ImageClip:
     else:
         im = Image.new("RGB", (w, h), config.VIDEO_BG_COLOR)
     return ImageClip(np.array(im)).with_duration(window)
+
+
+def _cover_image(im: Image.Image, w: int, h: int) -> Image.Image:
+    """Scale + center-crop ``im`` to exactly ``w``x``h`` (cover fit)."""
+    scale = max(w / im.width, h / im.height)
+    im = im.resize((round(im.width * scale), round(im.height * scale)), Image.LANCZOS)
+    left, top = (im.width - w) // 2, (im.height - h) // 2
+    return im.crop((left, top, left + w, top + h))
+
+
+def _ken_burns_clip(arr: np.ndarray, duration: float, pan_x: float, pan_y: float) -> ImageClip:
+    """A slow zoom + pan ("Ken Burns") clip from a frame-sized RGB array.
+
+    The scale stays > 1 throughout so the panned/zoomed image always overfills
+    the frame and never reveals an edge.
+    """
+    w, h = config.SLIDE_WIDTH, config.SLIDE_HEIGHT
+    z0, z1 = config.BG_KENBURNS_ZOOM_FROM, config.BG_KENBURNS_ZOOM_TO
+
+    def scale(t: float) -> float:
+        p = (t / duration) if duration else 0.0
+        return z0 + (z1 - z0) * p
+
+    def pos(t: float):
+        p = (t / duration) if duration else 0.0
+        s = scale(t)
+        # Center the (scaled) image, then drift it across by +/- the pan amount.
+        x = (w - w * s) / 2 + pan_x * (p - 0.5) * 2
+        y = (h - h * s) / 2 + pan_y * (p - 0.5) * 2
+        return (x, y)
+
+    return ImageClip(arr).with_duration(duration).resized(scale).with_position(pos)
+
+
+def _slot_layout(window: float, n: int) -> tuple[float, float]:
+    """Return (seg, xfade): per-clip length and crossfade so ``n`` clips tile
+    ``window`` exactly when overlapped by ``xfade``."""
+    xfade = min(config.BG_CROSSFADE, window / max(n, 1))
+    seg = (window + xfade * (n - 1)) / n
+    return seg, xfade
+
+
+def _overlay_layer(window: float) -> ColorClip:
+    """50% black overlay so captions stay readable over any background."""
+    return (
+        ColorClip(size=(config.SLIDE_WIDTH, config.SLIDE_HEIGHT), color=(0, 0, 0))
+        .with_opacity(config.BG_OVERLAY_OPACITY)
+        .with_duration(window)
+    )
+
+
+def _image_background_layers(window: float, image_paths: list[str]) -> list:
+    """4 Ken Burns (slow zoom + pan) images, crossfaded across the window."""
+    w, h = config.SLIDE_WIDTH, config.SLIDE_HEIGHT
+    n = len(image_paths)
+    seg, xfade = _slot_layout(window, n)
+
+    layers: list = []
+    for i, path in enumerate(image_paths):
+        arr = np.array(_cover_image(Image.open(path).convert("RGB"), w, h))
+        sign = 1 if i % 2 == 0 else -1  # alternate pan direction for variety
+        pan = config.BG_KENBURNS_PAN * sign
+        clip = _ken_burns_clip(arr, seg, pan, pan).with_start(i * (seg - xfade))
+        if i > 0:
+            clip = clip.with_effects([vfx.CrossFadeIn(xfade)])
+        layers.append(clip)
+    logger.info("Built %d-image Ken Burns background (%.1fs each, %.1fs crossfade)", n, seg, xfade)
+    return layers
+
+
+def _video_background_layers(window: float, video_paths: list[str]) -> list:
+    """Stock video clips looped/trimmed to their slot, cover-cropped, crossfaded."""
+    w, h = config.SLIDE_WIDTH, config.SLIDE_HEIGHT
+    n = len(video_paths)
+    seg, xfade = _slot_layout(window, n)
+
+    layers: list = []
+    for i, path in enumerate(video_paths):
+        clip = VideoFileClip(path).without_audio()
+        scale = max(w / clip.w, h / clip.h)               # cover-fit
+        clip = clip.resized(scale)
+        clip = clip.cropped(width=w, height=h, x_center=clip.w / 2, y_center=clip.h / 2)
+        clip = clip.with_effects([vfx.Loop(duration=seg)])  # loop short / trim long
+        clip = clip.with_start(i * (seg - xfade))
+        if i > 0:
+            clip = clip.with_effects([vfx.CrossFadeIn(xfade)])
+        layers.append(clip)
+    logger.info("Built %d-video background (%.1fs each, %.1fs crossfade)", n, seg, xfade)
+    return layers
+
+
+def _background_layers(window: float, paths: list[str]) -> list:
+    """Dispatch to video or image backgrounds, then add the darkening overlay.
+
+    All paths are assumed homogeneous (the selection chain returns either all
+    .mp4 or all image files).
+    """
+    is_video = bool(paths) and str(paths[0]).lower().endswith(".mp4")
+    layers = (
+        _video_background_layers(window, paths)
+        if is_video
+        else _image_background_layers(window, paths)
+    )
+    layers.append(_overlay_layer(window))
+    return layers
 
 
 def _clip_window(start: float, end: float, audio_duration: float) -> tuple[float, float]:
@@ -145,8 +258,19 @@ def _render_block(words_text: list[str], font: ImageFont.FreeTypeFont, highlight
     return np.array(img)
 
 
-def build_video(audio_path: str, words: list, highlights: dict, podcast_name: str = "") -> str:
-    """Render a word-level karaoke clip; return the output MP4 path."""
+def build_video(
+    audio_path: str,
+    words: list,
+    highlights: dict,
+    podcast_name: str = "",
+    background_images: list[str] | None = None,
+) -> str:
+    """Render a word-level karaoke clip; return the output MP4 path.
+
+    If ``background_images`` is given, they are sequenced across the clip with a
+    slow Ken Burns effect, crossfaded, and darkened 50%. Otherwise the dark /
+    blurred-asset background is used.
+    """
     if not os.path.exists(audio_path):
         raise FileNotFoundError(audio_path)
 
@@ -171,7 +295,10 @@ def build_video(audio_path: str, words: list, highlights: dict, podcast_name: st
             )
         window = end - start
         clip_audio = audio.subclipped(start, end)
-        layers.append(_make_background(window))
+        if background_images:
+            layers.extend(_background_layers(window, background_images))
+        else:
+            layers.append(_make_background(window))
 
         # Word-level karaoke captions.
         in_window = [
@@ -247,11 +374,12 @@ def build_video(audio_path: str, words: list, highlights: dict, podcast_name: st
 
 
 if __name__ == "__main__":
+    import json
     import subprocess
 
     import imageio_ffmpeg
 
-    from modules import ai_extract, transcribe
+    from modules import ai_extract, background, transcribe
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
@@ -260,43 +388,56 @@ if __name__ == "__main__":
         raise SystemExit(f"No MP3 found in {config.TMP_DIR} - run rss_ingest first.")
     audio_path = mp3s[0]
 
-    print(f"Transcribing: {os.path.basename(audio_path)}", flush=True)
-    transcript = transcribe.transcribe(audio_path)
-    highlights = ai_extract.extract_highlights(transcript)
+    # Cache the transcript + clip plan next to the MP3 so re-runs don't re-hit
+    # the Groq/Claude APIs (the "cached episode" workflow).
+    cache_path = os.path.splitext(audio_path)[0] + ".plan.json"
+    if os.path.exists(cache_path):
+        print(f"Loading cached transcript + plan: {os.path.basename(cache_path)}", flush=True)
+        with open(cache_path, encoding="utf-8") as f:
+            cached = json.load(f)
+        transcript, highlights = cached["transcript"], cached["highlights"]
+    else:
+        print(f"Transcribing: {os.path.basename(audio_path)}", flush=True)
+        transcript = transcribe.transcribe(audio_path)
+        highlights = ai_extract.extract_highlights(transcript)
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump({"transcript": transcript, "highlights": highlights}, f)
+
+    # Re-run JUST the extraction (no Groq) if the cached plan predates a schema
+    # field we now need (e.g. search_queries).
+    if "search_queries" not in highlights:
+        print("Cached plan missing search_queries; regenerating extraction...", flush=True)
+        highlights = ai_extract.extract_highlights(transcript)
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump({"transcript": transcript, "highlights": highlights}, f)
+
     start, end = highlights["clip_start"], highlights["clip_end"]
     print(f"Grounded clip window: {start:.2f}-{end:.2f}s ({end - start:.1f}s)", flush=True)
 
-    out = build_video(audio_path, transcript["words"], highlights, podcast_name="The Mindset Mentor")
+    print("\n=== search_queries ===")
+    for i, q in enumerate(highlights.get("search_queries", []), 1):
+        print(f"  {i}. {q.encode('ascii', 'replace').decode('ascii')}")
 
-    # Caption schedule for the first 10 seconds (relative to clip start).
-    in_window = [w for w in transcript["words"] if w["start"] >= start - 0.05 and w["end"] <= end + 0.05]
-    groups = group_words(in_window)
-    print("\n=== Word-caption schedule, first 10s (rel times; * = group boundary) ===")
-    for gi, group in enumerate(groups):
-        if (group[0]["start"] - start) > 10:
-            break
-        grp_txt = " ".join(g["word"] for g in group)[:48].encode("ascii", "replace").decode("ascii")
-        print(f"  group {gi}: \"{grp_txt}\"")
-        for gw in group:
-            r0, r1 = gw["start"] - start, gw["end"] - start
-            if r0 > 10:
-                break
-            tok = gw["word"].encode("ascii", "replace").decode("ascii")
-            print(f"      {r0:5.2f}-{r1:5.2f}s  {tok}")
+    # Ordered chain: Pexels video -> Gemini image -> gradient.
+    backgrounds = background.select_backgrounds(highlights)
+    src = "Pexels video" if backgrounds[0].lower().endswith(".mp4") else "Gemini/gradient image"
+    print(f"\nBackground source: {src}")
+    print(f"Backgrounds: {len(backgrounds)} -> {[os.path.basename(b) for b in backgrounds]}", flush=True)
 
-    # Pick a frame time ~4s in and report which word should be highlighted.
-    t = 4.0
-    active = next((wd for wd in in_window if (wd["start"] - start) <= t <= (wd["end"] - start)), None)
-    if active is None:
-        active = min(in_window, key=lambda wd: abs((wd["start"] - start) - t))
-        t = (active["start"] + active["end"]) / 2 - start
-    hl = active["word"].encode("ascii", "replace").decode("ascii")
-    print(f"\nSample frame at t={t:.2f}s -> highlighted word should be: '{hl}'", flush=True)
+    out = build_video(
+        audio_path, transcript["words"], highlights,
+        podcast_name="The Mindset Mentor", background_images=backgrounds,
+    )
 
-    frame_path = os.path.join(config.OUTPUT_DIR, "frame_karaoke.png")
+    # Save 3 sample frames spread across the clip so each background is visible.
+    window = end - start
     ff = imageio_ffmpeg.get_ffmpeg_exe()
-    subprocess.run([ff, "-y", "-ss", str(t), "-i", out, "-frames:v", "1", frame_path],
-                   check=True, capture_output=True)
-    print(f"Saved frame: {frame_path}", flush=True)
+    sample_times = [window * 0.15, window * 0.5, window * 0.85]
+    print("\n=== Sample frames ===", flush=True)
+    for i, t in enumerate(sample_times, 1):
+        frame_path = os.path.join(config.OUTPUT_DIR, f"frame_bg_{i}.png")
+        subprocess.run([ff, "-y", "-ss", f"{t:.2f}", "-i", out, "-frames:v", "1", frame_path],
+                       check=True, capture_output=True)
+        print(f"  t={t:5.2f}s -> {frame_path}", flush=True)
 
     print(f"\nVideo: {out}  ({os.path.getsize(out) / (1024 * 1024):.2f} MB)", flush=True)
