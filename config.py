@@ -75,6 +75,13 @@ SLIDE_BODY_FONT_SIZE = 66
 SLIDE_EYEBROW_FONT_SIZE = 40
 SLIDE_MIN_FONT_SIZE = 34            # floor when auto-shrinking long text
 
+# --- Background music (single fixed track, mixed under the voice) ---
+# Same track every video; skipped (voice-only) if the file is missing.
+MUSIC_PATH = os.path.join(BASE_DIR, "assets", "music", "background.mp3")
+MUSIC_GAIN_DB = -18        # music level relative to the voice (present bed under speech)
+MUSIC_FADE_IN = 1.0        # seconds
+MUSIC_FADE_OUT = 1.5       # seconds
+
 # --- Video output ---
 VIDEO_FPS = 30
 VIDEO_CODEC = "libx264"
@@ -126,8 +133,15 @@ HOOK_COLOR = "white"
 HOOK_DURATION = 3.0                  # seconds
 HOOK_TOP = 0.08                      # fraction of height
 
-# Podcast-name watermark (right side, muted). Kept well inside the safe area —
-# the bottom of the text sits at WATERMARK_BASELINE_Y so there's clear padding below.
+# Podcast-name watermark (right side). Kept well inside the safe area — the
+# bottom of the pill sits at WATERMARK_BASELINE_Y so there's clear padding below.
+# Solid white text on a semi-transparent dark rounded pill so it reads clearly
+# on any background while staying small and subtle.
 WATERMARK_FONT_SIZE = 34
-WATERMARK_COLOR = (160, 160, 160)
-WATERMARK_BASELINE_Y = 1700              # px (of 1920): bottom edge of the watermark text
+WATERMARK_COLOR = (255, 255, 255)        # solid white text
+WATERMARK_BASELINE_Y = 1700              # px (of 1920): bottom edge of the watermark pill
+WATERMARK_PILL_COLOR = (0, 0, 0)         # pill background
+WATERMARK_PILL_OPACITY = 0.45            # 45% black behind the text
+WATERMARK_PILL_PAD_X = 18                # horizontal padding text -> pill edge
+WATERMARK_PILL_PAD_Y = 10                # vertical padding text -> pill edge
+WATERMARK_PILL_RADIUS = 16               # rounded-corner radius (px)

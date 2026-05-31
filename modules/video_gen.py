@@ -5,8 +5,7 @@ podcast clip channels:
   - dark (or blurred-image) background
   - word-level karaoke captions: 4-5 words at a time, the currently-spoken
     word highlighted, each group appearing/disappearing on its timestamps
-  - the extracted hook across the top for the first few seconds
-  - a muted podcast-name watermark bottom-right
+  - a podcast-name watermark bottom-right (white on a dark pill)
 """
 
 import glob
@@ -18,10 +17,11 @@ import numpy as np
 from moviepy import (
     AudioFileClip,
     ColorClip,
+    CompositeAudioClip,
     CompositeVideoClip,
     ImageClip,
-    TextClip,
     VideoFileClip,
+    afx,
     vfx,
 )
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
@@ -258,6 +258,56 @@ def _render_block(words_text: list[str], font: ImageFont.FreeTypeFont, highlight
     return np.array(img)
 
 
+def _music_track(window: float):
+    """The fixed background-music bed for ``window`` seconds, or None.
+
+    Loops/trims the single track at ``config.MUSIC_PATH`` to the clip length,
+    drops it to ``MUSIC_GAIN_DB`` below the voice, and adds fade in/out. Returns
+    None (voice-only) when the file is absent so the pipeline never crashes.
+    """
+    path = config.MUSIC_PATH
+    if not os.path.exists(path):
+        logger.warning("No background music at %s; using voice only", path)
+        return None
+    factor = 10 ** (config.MUSIC_GAIN_DB / 20.0)  # dB -> linear gain
+    # AudioLoop fills the window: it repeats a short track, then with_duration's
+    # to the window (so a longer track is trimmed) -> handles both loop & trim.
+    music = AudioFileClip(path).with_effects([
+        afx.AudioLoop(duration=window),
+        afx.MultiplyVolume(factor),               # quiet bed under the speech
+        afx.AudioFadeIn(config.MUSIC_FADE_IN),
+        afx.AudioFadeOut(config.MUSIC_FADE_OUT),
+    ])
+    logger.info("Background music: %s at %+ddB (x%.4f), %.0fs", os.path.basename(path),
+                config.MUSIC_GAIN_DB, factor, window)
+    return music
+
+
+def _render_watermark(text: str, font: ImageFont.FreeTypeFont) -> np.ndarray:
+    """Render the podcast-name watermark as solid white text on a semi-transparent
+    dark rounded pill, to a transparent RGBA array. The pill guarantees contrast
+    on any background while keeping the mark small and subtle."""
+    measure = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    l, t, r, b = measure.textbbox((0, 0), text, font=font)
+    text_w, text_h = r - l, b - t
+    pad_x, pad_y = config.WATERMARK_PILL_PAD_X, config.WATERMARK_PILL_PAD_Y
+
+    pill_w = text_w + 2 * pad_x
+    pill_h = text_h + 2 * pad_y
+    img = Image.new("RGBA", (pill_w, pill_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    alpha = int(round(config.WATERMARK_PILL_OPACITY * 255))
+    draw.rounded_rectangle(
+        (0, 0, pill_w - 1, pill_h - 1),
+        radius=config.WATERMARK_PILL_RADIUS,
+        fill=(*config.WATERMARK_PILL_COLOR, alpha),
+    )
+    # textbbox offset (l, t) accounts for the font's internal padding so the
+    # glyphs sit centered in the pill.
+    draw.text((pad_x - l, pad_y - t), text, font=font, fill=config.WATERMARK_COLOR)
+    return np.array(img)
+
+
 def build_video(
     audio_path: str,
     words: list,
@@ -277,7 +327,7 @@ def build_video(
     os.makedirs(config.VIDEO_DIR, exist_ok=True)
     font_path = _bold_font_path()
     cap_font = ImageFont.truetype(font_path, config.CAPTION_FONT_SIZE)
-    hook_font = ImageFont.truetype(font_path, config.HOOK_FONT_SIZE)
+    wm_font = ImageFont.truetype(font_path, config.WATERMARK_FONT_SIZE)
     w, h = config.SLIDE_WIDTH, config.SLIDE_HEIGHT
     margin = config.SLIDE_MARGIN
     max_width = w - 2 * margin
@@ -329,35 +379,31 @@ def build_video(
                 n_clips += 1
         logger.info("Built %d word-caption clips from %d words in %.1fs window", n_clips, len(in_window), window)
 
-        # Hook across the top for the first few seconds.
-        hook = (highlights.get("hook") or "").strip()
-        if hook:
-            arr = _render_block(hook.split(), hook_font, -1, max_width)
-            hook_clip = (
-                ImageClip(arr, transparent=True)
-                .with_start(0)
-                .with_duration(min(config.HOOK_DURATION, window))
-                .with_position(("center", int(h * config.HOOK_TOP)))
-            )
-            layers.append(hook_clip)
-
-        # Muted watermark bottom-right.
+        # Watermark bottom-right: solid white on a dark pill so it reads on any bg.
         if podcast_name:
-            wm = TextClip(
-                font=font_path,
-                text=podcast_name,
-                font_size=config.WATERMARK_FONT_SIZE,
-                color=config.WATERMARK_COLOR,
-            ).with_duration(window)
-            ww, wh = wm.size
-            # Bottom edge at WATERMARK_BASELINE_Y (clear padding below); clamp x
-            # so the full text never runs off the left even if it's wide.
+            arr = _render_watermark(podcast_name, wm_font)
+            wh, ww = arr.shape[0], arr.shape[1]
+            # Bottom edge of the pill at WATERMARK_BASELINE_Y (clear padding
+            # below); clamp x so the full pill never runs off the left.
             wm_x = max(margin, w - margin - ww)
             wm_y = config.WATERMARK_BASELINE_Y - wh
-            wm = wm.with_position((wm_x, wm_y))
+            wm = (
+                ImageClip(arr, transparent=True)
+                .with_duration(window)
+                .with_position((wm_x, wm_y))
+            )
             layers.append(wm)
 
-        video = CompositeVideoClip(layers, size=(w, h)).with_audio(clip_audio).with_duration(window)
+        # Mix the fixed background music under the (full-volume) voice. The
+        # music is looped/trimmed to the window, quieted, and faded; absent
+        # music falls through to voice-only.
+        music = _music_track(window)
+        if music is not None:
+            final_audio = CompositeAudioClip([clip_audio, music]).with_duration(window)
+        else:
+            final_audio = clip_audio
+
+        video = CompositeVideoClip(layers, size=(w, h)).with_audio(final_audio).with_duration(window)
 
         out_path = os.path.join(config.VIDEO_DIR, f"{_slugify(highlights.get('title', 'clip'))}.mp4")
         video.write_videofile(
@@ -370,6 +416,8 @@ def build_video(
         video.close()
         for layer in layers:
             layer.close()
+        if music is not None:
+            music.close()
     finally:
         audio.close()
 
