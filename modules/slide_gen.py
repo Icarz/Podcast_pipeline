@@ -1,7 +1,16 @@
-"""Slide generation: render highlight text into vertical slide images via Pillow.
+"""Slide generation: editorial-style 4:5 portrait deck (Pillow).
 
-Produces a 9:16 slide deck for a short-form clip: a hook opener, one slide per
-insight, and a quote slide. Text auto-wraps and auto-shrinks to fit the frame.
+Renders a 5-slide Instagram carousel (1080x1350) for a short-form clip:
+    COVER (hook) -> INSIGHT 01/02/03 -> QUOTE
+
+Shared design system (see the constants block): dark #0D0D12 canvas, a yellow
+accent, near-white left-anchored body, a persistent footer (wordmark + 5
+progress dots), DejaVu Sans Bold for body and DejaVu Serif Bold for the giant
+ghosted insight numbers. Body text auto-fits (shrink + re-wrap) into the safe
+area between the eyebrow and the footer so short and long insights both fit.
+
+Public contract is unchanged: ``build_slides(highlights) -> list[str]`` returns
+the 5 ordered PNG paths (consumed by main.py).
 """
 
 import logging
@@ -13,23 +22,86 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Candidate Windows font files, tried in order (bold, then regular).
-_BOLD_FONTS = ["arialbd.ttf", "segoeuib.ttf", "calibrib.ttf"]
-_REGULAR_FONTS = ["arial.ttf", "segoeui.ttf", "calibri.ttf"]
-_FONTS_DIR = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+# --- Canvas (Instagram 4:5 portrait; independent of the 9:16 video frame) ---
+W, H = 1080, 1350
+
+# --- Palette ---
+BG = (13, 13, 18)          # #0D0D12 dark canvas
+ACCENT = (245, 197, 66)    # #F5C542 yellow
+BODY = (240, 240, 245)     # #F0F0F5 near-white
+MUTED = (110, 110, 120)    # #6E6E78 footer wordmark
+MUTED_YELLOW = (176, 142, 53)  # dimmed accent for the quote attribution
+DOT_OFF = (60, 60, 70)     # #3C3C46 inactive progress dots
+GHOST = (32, 32, 42)       # #20202A barely-there serif numbers
+
+# --- Geometry ---
+LEFT = 90                  # left margin everything is anchored to
+RIGHT = 90                 # right safe margin
+BODY_W = W - LEFT - RIGHT  # 900px text column
+FOOTER_CY = H - 64         # vertical center of the footer row
+BODY_BOTTOM = H - 128      # body must not cross below this (clears the footer)
+SAFE_TOP = 128             # top of the safe area (mirrors the bottom gap)
+SAFE_BOTTOM = BODY_BOTTOM
+SAFE_H = SAFE_BOTTOM - SAFE_TOP
+EYEBROW_GAP = 40           # gap between the eyebrow block and the body
+
+# --- Type ---
+BODY_SIZE_MAX = 62
+BODY_SIZE_MIN = 40
+BODY_LINE_SPACING = 1.25
+EYEBROW_SIZE = 30
+FOOTER_SIZE = 24
+ATTR_SIZE = 36             # quote attribution ("— Name")
+ATTR_GAP = 36              # gap between the quote and its attribution
+GHOST_SIZE = 520
+EYEBROW_TRACKING = 6       # uniform letter spacing for every eyebrow label
+FOOTER_TRACKING = 4
+TICK_W, TICK_H = 70, 8     # the little accent bar above each eyebrow
+
+# --- Fonts: bundled DejaVu (assets/fonts), with Windows fallbacks ---
+_FONTS_DIR = os.path.join(config.BASE_DIR, "assets", "fonts")
+_WIN_FONTS = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+_SANS_CANDIDATES = [
+    os.path.join(_FONTS_DIR, "DejaVuSans-Bold.ttf"),
+    os.path.join(_WIN_FONTS, "arialbd.ttf"),
+    os.path.join(_WIN_FONTS, "segoeuib.ttf"),
+]
+_SERIF_CANDIDATES = [
+    os.path.join(_FONTS_DIR, "DejaVuSerif-Bold.ttf"),
+    os.path.join(_WIN_FONTS, "georgiab.ttf"),
+    os.path.join(_WIN_FONTS, "timesbd.ttf"),
+]
+_FONT_CACHE: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
 
 
-def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
-    """Load a TrueType font at ``size``, falling back to Pillow's default."""
-    for name in (_BOLD_FONTS if bold else _REGULAR_FONTS):
-        path = os.path.join(_FONTS_DIR, name)
+def _font(candidates: list[str], size: int) -> ImageFont.FreeTypeFont:
+    """Load the first available font at ``size`` (cached)."""
+    for path in candidates:
+        key = (path, size)
+        if key in _FONT_CACHE:
+            return _FONT_CACHE[key]
         if os.path.exists(path):
-            return ImageFont.truetype(path, size)
+            font = ImageFont.truetype(path, size)
+            _FONT_CACHE[key] = font
+            return font
     return ImageFont.load_default(size)
 
 
-def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
-    """Greedy word-wrap ``text`` to lines no wider than ``max_width`` px."""
+def _sans(size: int) -> ImageFont.FreeTypeFont:
+    return _font(_SANS_CANDIDATES, size)
+
+
+def _serif(size: int) -> ImageFont.FreeTypeFont:
+    return _font(_SERIF_CANDIDATES, size)
+
+
+def _line_height(font: ImageFont.FreeTypeFont) -> int:
+    ascent, descent = font.getmetrics()
+    return int((ascent + descent) * BODY_LINE_SPACING)
+
+
+def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
+    """Greedy whole-word wrap of ``text`` to lines no wider than ``max_w`` px."""
     lines: list[str] = []
     for paragraph in text.split("\n"):
         words = paragraph.split()
@@ -39,7 +111,7 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, ma
         current = words[0]
         for word in words[1:]:
             trial = f"{current} {word}"
-            if draw.textlength(trial, font=font) <= max_width:
+            if draw.textlength(trial, font=font) <= max_w:
                 current = trial
             else:
                 lines.append(current)
@@ -48,91 +120,179 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, ma
     return lines
 
 
-def _fit_text(
-    draw: ImageDraw.ImageDraw,
-    text: str,
-    max_width: int,
-    max_height: int,
-    start_size: int,
-    bold: bool,
+def _fit_body(
+    draw: ImageDraw.ImageDraw, text: str, max_w: int, max_h: int
 ) -> tuple[ImageFont.FreeTypeFont, list[str], int]:
-    """Find the largest font size at which ``text`` fits in the box.
+    """Largest body size in [MIN, MAX] (step 2) whose wrap fits ``max_w`` x ``max_h``.
 
-    Returns (font, wrapped_lines, line_height).
+    Returns (font, wrapped_lines, line_height). Falls back to the floor size if
+    nothing fits, so long insights stay bounded rather than overflowing.
     """
-    size = start_size
-    while size >= config.SLIDE_MIN_FONT_SIZE:
-        font = _load_font(size, bold=bold)
-        lines = _wrap(draw, text, font, max_width)
-        ascent, descent = font.getmetrics()
-        line_height = int((ascent + descent) * 1.25)
-        if line_height * len(lines) <= max_height:
-            return font, lines, line_height
-        size -= 4
-    # Floor reached — use the minimum size regardless.
-    font = _load_font(config.SLIDE_MIN_FONT_SIZE, bold=bold)
-    lines = _wrap(draw, text, font, max_width)
+    for size in range(BODY_SIZE_MAX, BODY_SIZE_MIN - 1, -2):
+        font = _sans(size)
+        lines = _wrap(draw, text, font, max_w)
+        lh = _line_height(font)
+        if lh * len(lines) <= max_h:
+            return font, lines, lh
+    font = _sans(BODY_SIZE_MIN)
+    return font, _wrap(draw, text, font, max_w), _line_height(font)
+
+
+def _draw_tracked(
+    draw: ImageDraw.ImageDraw, x: int, y: int, text: str,
+    font: ImageFont.FreeTypeFont, fill, tracking: int, anchor: str = "lm",
+) -> float:
+    """Draw ``text`` char-by-char with extra ``tracking`` px between glyphs.
+    Returns the x just past the last glyph."""
+    cx = float(x)
+    for ch in text:
+        draw.text((cx, y), ch, font=font, fill=fill, anchor=anchor)
+        cx += draw.textlength(ch, font=font) + tracking
+    return cx
+
+
+def _eyebrow_block_h() -> int:
+    """Height of the tick + eyebrow label block (from tick top to text bottom)."""
+    ascent, descent = _sans(EYEBROW_SIZE).getmetrics()
+    return TICK_H + 24 + ascent + descent
+
+
+def _draw_eyebrow(draw: ImageDraw.ImageDraw, label: str, y: int) -> int:
+    """Accent tick bar + tracked yellow eyebrow at top ``y``. Returns its bottom y."""
+    draw.rectangle([LEFT, y, LEFT + TICK_W, y + TICK_H], fill=ACCENT)
+    font = _sans(EYEBROW_SIZE)
+    text_y = y + TICK_H + 24
+    _draw_tracked(draw, LEFT, text_y, label.upper(), font, ACCENT, EYEBROW_TRACKING, anchor="la")
     ascent, descent = font.getmetrics()
-    return font, lines, int((ascent + descent) * 1.25)
+    return text_y + ascent + descent
 
 
-def _render_slide(path: str, eyebrow: str, body: str) -> None:
-    """Render one slide: an accent ``eyebrow`` label above centered ``body`` text."""
-    w, h = config.SLIDE_WIDTH, config.SLIDE_HEIGHT
-    margin = config.SLIDE_MARGIN
-    max_width = w - 2 * margin
-
-    img = Image.new("RGB", (w, h), config.SLIDE_BG_COLOR)
-    draw = ImageDraw.Draw(img)
-
-    # Reserve vertical space for the eyebrow so body stays centered in the rest.
-    eyebrow_font = _load_font(config.SLIDE_EYEBROW_FONT_SIZE, bold=True)
-    eyebrow_h = int(sum(eyebrow_font.getmetrics()) * 1.5) if eyebrow else 0
-
-    body_font, lines, line_height = _fit_text(
-        draw, body, max_width, h - 2 * margin - eyebrow_h, config.SLIDE_BODY_FONT_SIZE, bold=True
-    )
-
-    block_h = line_height * len(lines)
-    start_y = (h - block_h) // 2
-
-    if eyebrow:
-        ex = (w - draw.textlength(eyebrow, font=eyebrow_font)) // 2
-        draw.text((ex, start_y - eyebrow_h), eyebrow, font=eyebrow_font, fill=config.SLIDE_ACCENT_COLOR)
-
-    y = start_y
+def _draw_body(draw: ImageDraw.ImageDraw, lines: list[str], font: ImageFont.FreeTypeFont, lh: int, top: int) -> None:
+    y = top
     for line in lines:
-        lx = (w - draw.textlength(line, font=body_font)) // 2
-        draw.text((lx, y), line, font=body_font, fill=config.SLIDE_TEXT_COLOR)
-        y += line_height
+        draw.text((LEFT, y), line, font=font, fill=BODY, anchor="la")
+        y += lh
 
+
+def _draw_ghost_number(draw: ImageDraw.ImageDraw, n: int) -> int:
+    """Giant ghosted serif number bleeding off the top edge. Returns its bottom y."""
+    font = _serif(GHOST_SIZE)
+    text = f"{n:02d}"
+    x, y = 50, -120  # negative y bleeds the number off the top
+    draw.text((x, y), text, font=font, fill=GHOST, anchor="la")
+    return draw.textbbox((x, y), text, font=font, anchor="la")[3]
+
+
+def _draw_footer(draw: ImageDraw.ImageDraw, active: int, total: int = 5) -> None:
+    """Wordmark bottom-left + ``total`` progress dots bottom-right (``active`` yellow)."""
+    _draw_tracked(draw, LEFT, FOOTER_CY, "THE MINDSET MENTOR", _sans(FOOTER_SIZE),
+                  MUTED, FOOTER_TRACKING, anchor="lm")
+    r, gap = 7, 26
+    for i in range(total):
+        cx = (W - RIGHT) - (total - 1 - i) * gap
+        color = ACCENT if i == active else DOT_OFF
+        draw.ellipse([cx - r, FOOTER_CY - r, cx + r, FOOTER_CY + r], fill=color)
+
+
+def _canvas() -> tuple[Image.Image, ImageDraw.ImageDraw]:
+    img = Image.new("RGB", (W, H), BG)
+    return img, ImageDraw.Draw(img)
+
+
+def _render_cover(path: str, hook: str, idx: int) -> None:
+    img, draw = _canvas()
+    eb_h = _eyebrow_block_h()
+    font, lines, lh = _fit_body(draw, hook, BODY_W, SAFE_H - eb_h - EYEBROW_GAP)
+    # Center the whole (eyebrow + body) block vertically in the safe area.
+    block_h = eb_h + EYEBROW_GAP + lh * len(lines)
+    top = SAFE_TOP + (SAFE_H - block_h) // 2
+    _draw_eyebrow(draw, "WATCH THIS", top)
+    _draw_body(draw, lines, font, lh, top + eb_h + EYEBROW_GAP)
+    _draw_footer(draw, idx)
     img.save(path)
-    logger.info("Rendered slide: %s", os.path.basename(path))
+    logger.info("Rendered slide: %s (cover, centered)", os.path.basename(path))
+
+
+def _render_insight(path: str, number: int, text: str, idx: int) -> None:
+    img, draw = _canvas()
+    ghost_bottom = _draw_ghost_number(draw, number)
+    eyebrow_bottom = _draw_eyebrow(draw, "INSIGHT", int(ghost_bottom) + 30)
+    body_top = eyebrow_bottom + 36
+    font, lines, lh = _fit_body(draw, text, BODY_W, BODY_BOTTOM - body_top)
+    _draw_body(draw, lines, font, lh, body_top)
+    _draw_footer(draw, idx)
+    img.save(path)
+    logger.info("Rendered slide: %s (insight %02d)", os.path.basename(path), number)
+
+
+def _render_quote(path: str, quote: str, attribution: str | None, idx: int) -> None:
+    img, draw = _canvas()
+    eb_h = _eyebrow_block_h()
+    text = f"“{quote}”"  # curly opening/closing quotes
+
+    # Reserve the attribution's height up front so the full block centers together.
+    attr_h = 0
+    if attribution:
+        a_ascent, a_descent = _sans(ATTR_SIZE).getmetrics()
+        attr_h = ATTR_GAP + a_ascent + a_descent
+
+    font, lines, lh = _fit_body(draw, text, BODY_W, SAFE_H - eb_h - EYEBROW_GAP - attr_h)
+    body_h = lh * len(lines)
+    block_h = eb_h + EYEBROW_GAP + body_h + attr_h
+    top = SAFE_TOP + (SAFE_H - block_h) // 2
+
+    _draw_eyebrow(draw, "QUOTE", top)
+    body_top = top + eb_h + EYEBROW_GAP
+    _draw_body(draw, lines, font, lh, body_top)
+    if attribution:
+        ay = body_top + body_h + ATTR_GAP
+        draw.text((LEFT, ay), f"— {attribution}", font=_sans(ATTR_SIZE), fill=MUTED_YELLOW, anchor="la")
+    _draw_footer(draw, idx)
+    img.save(path)
+    logger.info("Rendered slide: %s (quote, centered%s)", os.path.basename(path),
+                ", attributed" if attribution else "")
+
+
+# Optional attribution keys the extraction MIGHT carry. The current ai_extract
+# schema produces none of these, so the quote slide shows no attribution unless
+# a real one is present — we never invent a speaker.
+_ATTR_KEYS = ("quote_author", "quote_attribution", "attribution", "speaker", "author")
+
+
+def _attribution(highlights: dict) -> str | None:
+    """Return a real quote attribution if the extraction supplies one, else None."""
+    for key in _ATTR_KEYS:
+        value = highlights.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def build_slides(highlights: dict) -> list[str]:
-    """Render a slide deck from a ``highlights`` dict; return ordered slide paths.
+    """Render the 5-slide editorial deck; return ordered PNG paths.
 
-    Expects keys: hook, insights (list), best_quote.
+    Order: COVER (hook), INSIGHT 01-03 (insights), QUOTE (best_quote).
+    Requires keys: hook, insights (>=1, uses up to 3), best_quote.
     """
     os.makedirs(config.SLIDE_DIR, exist_ok=True)
 
-    specs: list[tuple[str, str]] = []
-    if highlights.get("hook"):
-        specs.append(("WATCH THIS", highlights["hook"]))
-    for i, insight in enumerate(highlights.get("insights", []), start=1):
-        specs.append((f"INSIGHT {i}", insight))
-    if highlights.get("best_quote"):
-        specs.append(("QUOTE", f"“{highlights['best_quote']}”"))
-
-    if not specs:
-        raise ValueError("highlights has no hook, insights, or best_quote to render")
+    hook = (highlights.get("hook") or "").strip()
+    insights = [str(i).strip() for i in (highlights.get("insights") or []) if str(i).strip()]
+    quote = (highlights.get("best_quote") or "").strip()
+    if not hook or not insights or not quote:
+        raise ValueError("highlights needs hook, insights, and best_quote to build the deck")
 
     paths: list[str] = []
-    for idx, (eyebrow, body) in enumerate(specs):
-        path = os.path.join(config.SLIDE_DIR, f"slide_{idx:02d}.png")
-        _render_slide(path, eyebrow, body)
-        paths.append(path)
+
+    def _path(i: int) -> str:
+        p = os.path.join(config.SLIDE_DIR, f"slide_{i:02d}.png")
+        paths.append(p)
+        return p
+
+    _render_cover(_path(0), hook, idx=0)
+    for n, insight in enumerate(insights[:3], start=1):
+        _render_insight(_path(len(paths)), n, insight, idx=len(paths) - 1)
+    _render_quote(_path(len(paths)), quote, _attribution(highlights), idx=len(paths) - 1)
 
     logger.info("Built %d slides in %s", len(paths), config.SLIDE_DIR)
     return paths
