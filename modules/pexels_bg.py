@@ -32,14 +32,14 @@ def _api_key() -> str | None:
     return os.environ.get("PEXELS_API_KEY")
 
 
-def _request(query: str, orientation: str) -> dict | None:
+def _request(query: str, orientation: str, per_page: int = None) -> dict | None:
     """One Pexels search call with backoff on 429; returns parsed JSON or None."""
     headers = {"Authorization": _api_key()}
     params = {
         "query": query,
         "orientation": orientation,
         "size": config.PEXELS_SIZE,
-        "per_page": config.PEXELS_PER_PAGE,
+        "per_page": per_page or config.PEXELS_PER_PAGE,
     }
     for attempt in range(len(config.PEXELS_BACKOFFS) + 1):
         try:
@@ -88,19 +88,29 @@ def _best_vertical_file(video: dict) -> str | None:
     return min(files, key=score)["link"]
 
 
-def _find_video_url(query: str) -> str | None:
-    """Search ``query`` across orientations until a usable video is found."""
+def _find_video(query: str, used_ids: set | None = None) -> tuple[str | None, int | None]:
+    """Search ``query`` across orientations for a usable, not-yet-used video.
+
+    Pulls several candidates per query and skips any whose Pexels video id is in
+    ``used_ids`` so the same clip never fills two background slots. Returns
+    ``(download_url, video_id)``, or ``(None, None)`` if nothing usable is left.
+    """
+    used_ids = used_ids or set()
     for orientation in config.PEXELS_ORIENTATIONS:
-        data = _request(query, orientation)
+        data = _request(query, orientation, per_page=config.PEXELS_VIDEO_PER_PAGE)
         if not data:
             continue
         for video in data.get("videos", []):
+            vid = video.get("id")
+            if vid in used_ids:
+                logger.info("Pexels video %s for %r already used; skipping to next", vid, query)
+                continue
             url = _best_vertical_file(video)
             if url:
-                logger.info("Pexels match for %r (%s): video %s", query, orientation, video.get("id"))
-                return url
-    logger.warning("No Pexels video found for %r in any orientation", query)
-    return None
+                logger.info("Pexels match for %r (%s): video %s", query, orientation, vid)
+                return url, vid
+    logger.warning("No unused Pexels video found for %r in any orientation", query)
+    return None, None
 
 
 def _download(url: str, path: str) -> bool:
@@ -120,6 +130,84 @@ def _download(url: str, path: str) -> bool:
         return False
 
 
+def _photo_request(query: str, orientation: str) -> dict | None:
+    """One Pexels *photo* search call with backoff on 429; parsed JSON or None."""
+    headers = {"Authorization": _api_key()}
+    params = {
+        "query": query,
+        "orientation": orientation,
+        "size": config.PEXELS_SIZE,
+        "per_page": config.PEXELS_PER_PAGE,
+    }
+    for attempt in range(len(config.PEXELS_BACKOFFS) + 1):
+        try:
+            resp = requests.get(
+                config.PEXELS_PHOTO_SEARCH_URL,
+                headers=headers,
+                params=params,
+                timeout=config.PEXELS_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            logger.warning("Pexels photo request error for %r (%s); aborting", query, exc)
+            return None
+
+        if resp.status_code == 429:
+            if attempt < len(config.PEXELS_BACKOFFS):
+                wait = config.PEXELS_BACKOFFS[attempt]
+                logger.warning("Pexels photo rate-limited (429) for %r, retry in %ds", query, wait)
+                time.sleep(wait)
+                continue
+            logger.warning("Pexels photo still 429 for %r after retries; giving up", query)
+            return None
+
+        if resp.status_code != 200:
+            logger.warning("Pexels photo HTTP %d for %r (%s)", resp.status_code, query, orientation)
+            return None
+
+        return resp.json()
+    return None
+
+
+def _best_photo_url(photo: dict) -> str | None:
+    """Highest-res download URL from a Pexels photo's ``src`` dict.
+
+    Prefers the original/large renditions so the center-crop to 1080x1350 stays
+    sharp; ``portrait`` (800x1200) is only a last resort.
+    """
+    src = photo.get("src") or {}
+    for key in ("original", "large2x", "large", "portrait"):
+        url = src.get(key)
+        if url:
+            return url
+    return None
+
+
+def fetch_photo(query: str, path: str, force: bool = False) -> str | None:
+    """Download ONE portrait stock photo for ``query`` to ``path``.
+
+    Returns ``path`` on success (or when a cached file already exists), else
+    ``None`` so the caller can fall back. Never raises.
+    """
+    if not force and os.path.exists(path) and os.path.getsize(path) > 0:
+        logger.info("Pexels slide photo cached, skipping: %s", os.path.basename(path))
+        return path
+    if not _api_key():
+        logger.info("PEXELS_API_KEY not set; skipping Pexels slide photo")
+        return None
+    if not query:
+        return None
+
+    data = _photo_request(query, "portrait")
+    if data:
+        for photo in data.get("photos", []):
+            url = _best_photo_url(photo)
+            if url and _download(url, path):
+                logger.info("Downloaded Pexels slide photo for %r: %s", query, os.path.basename(path))
+                return path
+    logger.warning("No Pexels photo for %r; slide will fall back to solid background", query)
+    return None
+
+
 def fetch_backgrounds(queries: list[str], out_dir: str = None, force: bool = False) -> list[str] | None:
     """Download one stock video per query; return paths, or None if all fail.
 
@@ -136,6 +224,7 @@ def fetch_backgrounds(queries: list[str], out_dir: str = None, force: bool = Fal
     os.makedirs(out_dir, exist_ok=True)
 
     paths: list[str] = []
+    used_ids: set = set()  # Pexels video ids already taken, so no clip repeats.
     for i, query in enumerate(queries, start=1):
         path = os.path.join(out_dir, f"{config.BG_IMAGE_PREFIX}{i}.mp4")
 
@@ -144,9 +233,10 @@ def fetch_backgrounds(queries: list[str], out_dir: str = None, force: bool = Fal
             paths.append(path)
             continue
 
-        url = _find_video_url(query)
+        url, vid = _find_video(query, used_ids)
         if url and _download(url, path):
-            logger.info("Downloaded Pexels background: %s", os.path.basename(path))
+            used_ids.add(vid)
+            logger.info("Downloaded Pexels background: %s (video %s)", os.path.basename(path), vid)
             paths.append(path)
 
     if not paths:
@@ -165,7 +255,9 @@ if __name__ == "__main__":
     if not plans:
         raise SystemExit(f"No *.plan.json found in {config.TMP_DIR} - run the pipeline once first.")
     with open(plans[0], encoding="utf-8") as f:
-        queries = json.load(f)["highlights"].get("search_queries", [])
+        highlights = json.load(f)["highlights"]
+    vq = highlights.get("video_queries") or []
+    queries = [v["query"] if isinstance(v, dict) else v for v in vq] or highlights.get("search_queries", [])
     print(f"Queries: {queries}\n", flush=True)
 
     out = fetch_backgrounds(queries, force=True)

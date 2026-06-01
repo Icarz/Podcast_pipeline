@@ -42,19 +42,79 @@ SYSTEM_PROMPT = (
     '  "image_prompts": array of exactly 4 strings — cinematic visual '
     "descriptions for AI-generated vertical 9:16 background images that match "
     "the episode's theme and mood.\n"
-    '  "search_queries": array of exactly 4 strings — short stock-footage '
-    "search terms (2-4 words each) for finding matching background video.\n\n"
+    '  "search_queries": array of exactly 5 strings — one art-directed stock-'
+    "PHOTO search query per carousel slide, IN THIS ORDER: [0] cover (matches the "
+    "hook), [1] insight 1, [2] insight 2, [3] insight 3, [4] quote. Each 2-4 "
+    "words. See the SEARCH_QUERIES art-direction rules below.\n"
+    '  "video_queries": array of exactly 4 OBJECTS — art-directed stock-VIDEO '
+    "beats for the moving background BEHIND the chosen clip (clip_start to "
+    "clip_end). These are SEPARATE from search_queries and tuned for motion "
+    'footage. Each object is {"keyword": <one concept word>, "query": <2-4 word '
+    "portrait stock-video search>}. See the VIDEO_QUERIES art-direction rules "
+    "below.\n\n"
     "Style guidance for image_prompts: realistic lifestyle and cinematic "
     "environments — people in motion, cities at golden hour, gyms, workspaces "
     "with natural light, silhouettes, wide establishing shots. AVOID tight face "
     "close-ups. Each prompt must be vivid, specific, and self-contained "
     "(describe the scene, lighting, mood, and framing), suitable as a darkened "
     "background behind bold captions in a vertical 9:16 video.\n\n"
-    "Style guidance for search_queries: concrete, visual, lifestyle stock-"
-    'footage phrases of 2-4 words, e.g. "city sunrise aerial", "person running '
-    'trail", "morning coffee desk", "gym workout dark". Keep them concrete and '
-    "visual, NOT abstract concepts. They should match the same themes as the "
-    "image_prompts.\n\n"
+    "SEARCH_QUERIES — think like an ART DIRECTOR choosing the single best photo "
+    "for each slide, NOT random mood shots. Produce EXACTLY 5 queries, one per "
+    "slide, in slide order (cover, insight 1, insight 2, insight 3, quote). For "
+    "EACH slide: (1) FIRST identify the CORE CONCEPT or EMOTION of that specific "
+    'line (e.g. "isolation", "focus", "overstimulation", "looking forward", '
+    '"inner peace", "discipline"). (2) THEN translate it into a CONCRETE, '
+    "FILMABLE scene a stock photographer actually shot — a real person, place, or "
+    "object DOING something, not an abstract idea (stock libraries have photos of "
+    "THINGS and PEOPLE doing THINGS, not concepts). (3) Each query = 2-4 words, "
+    "visual and specific.\n"
+    "Rules: prefer human moments and cinematic environments, e.g. "
+    '"man walking alone fog", "woman meditating window light", "empty road '
+    'sunrise", "person silhouette mountain", "hands holding coffee morning". '
+    "Match the EMOTIONAL TONE: calm ideas -> soft/natural light, serene settings; "
+    "hard/discipline ideas -> moody, high-contrast, urban; overstimulation -> "
+    "crowds, screens, city chaos. Avoid literal-but-ugly matches (do NOT search "
+    '"human brain" for a line about brains — search the FEELING, like "person '
+    'overwhelmed city crowd"). All 5 MUST be DISTINCT scenes, never two similar '
+    "queries. Favor portrait-friendly vertical compositions (a standing figure, a "
+    "path, a doorway, a tall window).\n"
+    "Examples of the thinking: "
+    '"Human brains were not built for this level of stimulation" -> '
+    'overstimulation -> "person overwhelmed phone crowd"; "Being peaceful becomes '
+    'your superpower" -> calm amid chaos -> "calm person quiet nature"; '
+    '"Discipline beats motivation" -> solitary grit -> "runner dawn empty '
+    'street".\n\n'
+    "VIDEO_QUERIES — think like a FILM EDITOR choosing B-roll for the chosen "
+    "clip, NOT like a photo picker. Produce EXACTLY 4 beats that together form ONE "
+    "coherent moving backdrop behind the clip. For EACH beat, work in TWO steps:\n"
+    "  STEP 1 — KEYWORD: read the ACTUAL spoken words inside the clip window "
+    "(clip_start..clip_end), split it into 4 emotional beats (opening, two middle "
+    "beats, payoff), and for each beat name ONE core CONCEPT KEYWORD that captures "
+    "its emotion — a single word such as wisdom, focus, calm, solitude, "
+    "discipline, clarity, stillness, resilience, overwhelm, or freedom. This "
+    "keyword is the emotional anchor.\n"
+    "  STEP 2 — QUERY: build a short (2-4 word) cinematic portrait stock-VIDEO "
+    "search query ANCHORED on that keyword — a concrete, filmable scene that "
+    "embodies it. e.g. keyword \"focus\" -> \"person reading quiet room\"; "
+    'keyword "solitude" -> "lone figure misty trail"; keyword "freedom" -> '
+    '"open road sunrise drive".\n'
+    "Rules for the queries: STRONGLY favor scenes with natural movement that loop "
+    "and crossfade smoothly — walking figures and silhouettes, nature in motion "
+    "(flowing water, drifting fog, trees in wind, waves, rain on glass), city "
+    "movement (traffic, crowds, trains, light trails), slow aerial / landscape "
+    "flyovers, and hands doing things (writing, brewing coffee, working). AVOID "
+    "static concepts that only exist as still photos (logos, charts, posed "
+    "headshots, a single object on a table). The captions already carry the "
+    "literal words, so match the overall MOOD, not the dictionary meaning. All 4 "
+    "KEYWORDS must be DISTINCT and all 4 QUERIES must be DISTINCT scenes, yet "
+    "TONALLY CONSISTENT with one another (same time of day / palette / energy) so "
+    "they crossfade as one continuous piece — do NOT mix a bright beach with a "
+    "dark city. Favor vertical-friendly compositions.\n"
+    "Example for a calm clip about inner peace: "
+    '[{"keyword": "stillness", "query": "misty forest morning"}, '
+    '{"keyword": "calm", "query": "slow river flowing"}, '
+    '{"keyword": "clarity", "query": "fog drifting mountains"}, '
+    '{"keyword": "solitude", "query": "person walking trail"}].\n\n'
     "Clip length: aim for a window of "
     f"{config.CLIP_WINDOW_MIN_SECONDS}-{config.CLIP_WINDOW_MAX_SECONDS} seconds. "
     "You may run slightly longer, but (clip_end - clip_start) MUST NEVER exceed "
@@ -95,6 +155,92 @@ def _strip_to_json(text: str) -> str:
     return text
 
 
+def _normalize_query_list(data: dict, key: str, target: int) -> None:
+    """Coerce ``data[key]`` to EXACTLY ``target`` non-empty query strings (in place).
+
+    Drops blanks and extras (truncate) and pads by cycling the real queries when
+    the model returns too few. Logs a warning whenever it adjusts the count so a
+    stray count never crashes the pipeline. Only raises if there is nothing at
+    all to derive a list from.
+    """
+    queries = [q.strip() for q in data[key] if isinstance(q, str) and q.strip()]
+    if not queries:
+        raise ValueError(f"{key!r} must contain at least one non-empty string")
+    if len(queries) != target:
+        logger.warning(
+            "%s count %d != %d; normalizing to %d (truncating extras / "
+            "duplicating to fill)",
+            key, len(queries), target, target,
+        )
+        if len(queries) > target:
+            queries = queries[:target]
+        else:
+            base = list(queries)
+            i = 0
+            while len(queries) < target:
+                queries.append(base[i % len(base)])
+                i += 1
+    data[key] = queries
+
+
+def _normalize_video_queries(data: dict, target: int) -> None:
+    """Coerce ``data['video_queries']`` to EXACTLY ``target`` {keyword, query} objects.
+
+    Each item is normalized to ``{"keyword": str, "query": str}``. Accepts a bare
+    string from a model that ignored the object format (keyword left blank).
+    Drops entries with an empty query, then de-duplicates so all keywords are
+    distinct AND all queries are distinct (case-insensitive, first wins). Extras
+    are truncated. If de-dup leaves fewer than ``target``, pads by cycling the
+    surviving objects (last resort) — the Pexels-level dedup in pexels_bg still
+    keeps the actual CLIPS distinct even when two queries coincide. Warns on any
+    adjustment; only raises if there is nothing usable at all.
+    """
+    raw = data.get("video_queries") or []
+
+    cleaned: list[dict] = []
+    seen_keywords: set[str] = set()
+    seen_queries: set[str] = set()
+    for item in raw:
+        if isinstance(item, dict):
+            keyword = str(item.get("keyword") or "").strip()
+            query = str(item.get("query") or "").strip()
+        elif isinstance(item, str):
+            keyword, query = "", item.strip()
+        else:
+            continue
+        if not query:
+            continue
+        # Distinct keywords AND distinct queries (case-insensitive).
+        qk = query.lower()
+        kk = keyword.lower()
+        if qk in seen_queries or (kk and kk in seen_keywords):
+            continue
+        seen_queries.add(qk)
+        if kk:
+            seen_keywords.add(kk)
+        cleaned.append({"keyword": keyword, "query": query})
+
+    if not cleaned:
+        raise ValueError("'video_queries' must contain at least one usable {keyword, query}")
+
+    if len(cleaned) != target:
+        logger.warning(
+            "video_queries count %d != %d after de-dup; normalizing to %d "
+            "(truncating extras / cycling to fill — clips stay distinct via Pexels dedup)",
+            len(cleaned), target, target,
+        )
+        if len(cleaned) > target:
+            cleaned = cleaned[:target]
+        else:
+            base = list(cleaned)
+            i = 0
+            while len(cleaned) < target:
+                cleaned.append(base[i % len(base)])
+                i += 1
+
+    data["video_queries"] = cleaned
+
+
 def _validate(data: dict) -> None:
     """Raise ValueError if ``data`` doesn't match the required schema."""
     required = {
@@ -107,6 +253,7 @@ def _validate(data: dict) -> None:
         "hashtags": list,
         "image_prompts": list,
         "search_queries": list,
+        "video_queries": list,
     }
     for key, expected_type in required.items():
         if key not in data:
@@ -128,13 +275,13 @@ def _validate(data: dict) -> None:
     if not all(isinstance(p, str) and p.strip() for p in data["image_prompts"]):
         raise ValueError("'image_prompts' must be non-empty strings")
 
-    if len(data["search_queries"]) != config.SEARCH_QUERY_COUNT:
-        raise ValueError(
-            f"'search_queries' must have exactly {config.SEARCH_QUERY_COUNT} items, "
-            f"got {len(data['search_queries'])}"
-        )
-    if not all(isinstance(q, str) and q.strip() for q in data["search_queries"]):
-        raise ValueError("'search_queries' must be non-empty strings")
+    # Normalize the query lists to their EXACT expected counts. Each downstream
+    # consumer needs a fixed count (slides = one photo query per slide; the video
+    # = one stock-video query per background slot), but a stray count from the
+    # model must never crash the pipeline: drop blanks/extras, and pad by cycling
+    # the real queries if too few.
+    _normalize_query_list(data, "search_queries", config.SEARCH_QUERY_COUNT)
+    _normalize_video_queries(data, config.VIDEO_QUERY_COUNT)
 
     window = data["clip_end"] - data["clip_start"]
     lo, hi = config.CLIP_WINDOW_MIN_SECONDS, config.CLIP_WINDOW_MAX_HARD_SECONDS

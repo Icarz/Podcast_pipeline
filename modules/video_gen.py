@@ -456,9 +456,12 @@ if __name__ == "__main__":
             json.dump({"transcript": transcript, "highlights": highlights}, f)
 
     # Re-run JUST the extraction (no Groq) if the cached plan predates a schema
-    # field we now need (e.g. search_queries).
-    if "search_queries" not in highlights:
-        print("Cached plan missing search_queries; regenerating extraction...", flush=True)
+    # field we now need: missing search_queries/video_queries, or video_queries
+    # still in the old plain-string form (now {keyword, query} objects).
+    vq = highlights.get("video_queries")
+    stale_vq = not vq or not all(isinstance(v, dict) for v in vq)
+    if "search_queries" not in highlights or stale_vq:
+        print("Cached plan missing/old search_queries/video_queries; regenerating extraction...", flush=True)
         highlights = ai_extract.extract_highlights(transcript)
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump({"transcript": transcript, "highlights": highlights}, f)
@@ -466,9 +469,16 @@ if __name__ == "__main__":
     start, end = highlights["clip_start"], highlights["clip_end"]
     print(f"Grounded clip window: {start:.2f}-{end:.2f}s ({end - start:.1f}s)", flush=True)
 
-    print("\n=== search_queries ===")
+    print("\n=== search_queries (slides) ===")
     for i, q in enumerate(highlights.get("search_queries", []), 1):
         print(f"  {i}. {q.encode('ascii', 'replace').decode('ascii')}")
+
+    print("\n=== video_queries (clip background: keyword -> query) ===")
+    for i, vq in enumerate(highlights.get("video_queries", []), 1):
+        kw = (vq.get("keyword") if isinstance(vq, dict) else "") or "?"
+        q = (vq.get("query") if isinstance(vq, dict) else vq) or ""
+        line = f"  {i}. {kw}  ->  {q}"
+        print(line.encode("ascii", "replace").decode("ascii"))
 
     # Ordered chain: Pexels video -> Gemini image -> gradient.
     backgrounds = background.select_backgrounds(highlights)

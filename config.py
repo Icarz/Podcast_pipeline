@@ -96,13 +96,19 @@ BG_DARKEN = 0.35                     # brightness multiplier (0=black, 1=origina
 # --- AI-generated themed backgrounds (Gemini 2.5 Flash Image / "Nano Banana") ---
 IMAGE_MODEL = "gemini-2.5-flash-image"
 IMAGE_PROMPT_COUNT = 4               # number of background prompts ai_extract emits
-SEARCH_QUERY_COUNT = 4               # number of stock-footage search terms ai_extract emits
+SEARCH_QUERY_COUNT = 5               # one art-directed stock-photo query per carousel slide
+VIDEO_QUERY_COUNT = 4                # art-directed stock-VIDEO queries for the clip background
 IMAGE_ASPECT_RATIO = "9:16"          # vertical, matches the video frame
 BG_IMAGE_PREFIX = "bg_"             # tmp/bg_<n>.png  /  tmp/bg_<n>.mp4
 
 # --- Pexels stock video (primary background source) ---
 PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
+# Photo search (still images for the carousel slide backgrounds).
+PEXELS_PHOTO_SEARCH_URL = "https://api.pexels.com/v1/search"
 PEXELS_PER_PAGE = 1
+# Video search pulls several candidates per query so duplicate clips (the same
+# Pexels video matching two different queries) can be skipped for the next one.
+PEXELS_VIDEO_PER_PAGE = 12
 # Orientations tried in order per query (portrait preferred for 9:16).
 PEXELS_ORIENTATIONS = ["portrait", "square", "landscape"]
 PEXELS_SIZE = "medium"

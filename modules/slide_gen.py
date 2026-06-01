@@ -19,6 +19,7 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 
 import config
+from modules import pexels_bg
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,20 @@ BODY = (240, 240, 245)     # #F0F0F5 near-white
 MUTED = (110, 110, 120)    # #6E6E78 footer wordmark
 MUTED_YELLOW = (176, 142, 53)  # dimmed accent for the quote attribution
 DOT_OFF = (60, 60, 70)     # #3C3C46 inactive progress dots
-GHOST = (32, 32, 42)       # #20202A barely-there serif numbers
+GHOST = (32, 32, 42)       # #20202A barely-there serif numbers (solid-bg fallback only)
+
+# --- Photo background treatment (full-bleed Pexels photo behind every slide) ---
+# Readability is non-negotiable: a flat black overlay sets a dark floor, and a
+# vertical gradient scrim deepens it further over the text band so body copy
+# stays legible no matter how bright the photo is.
+OVERLAY_BASE_ALPHA = 0.60   # flat 60% black over the whole photo
+BAND_PEAK_ALPHA = 0.75      # ~75% black in the region where the text sits
+INSIGHT_BAND_PEAK_ALPHA = 0.82  # insight photos are busiest -> deepen their text band
+BAND_FEATHER = 220          # px ramp from base->peak above/below the text band
+GHOST_WHITE = (255, 255, 255)       # ghost number now reads as a watermark...
+GHOST_ALPHA = int(0.12 * 255)       # ...at ~12% opacity over the photo
+TEXT_STROKE_W = 2                   # black stroke/shadow behind body text
+TEXT_STROKE = (0, 0, 0)
 
 # --- Geometry ---
 LEFT = 90                  # left margin everything is anchored to
@@ -141,14 +155,78 @@ def _fit_body(
 def _draw_tracked(
     draw: ImageDraw.ImageDraw, x: int, y: int, text: str,
     font: ImageFont.FreeTypeFont, fill, tracking: int, anchor: str = "lm",
+    stroke_width: int = 0, stroke_fill=TEXT_STROKE,
 ) -> float:
     """Draw ``text`` char-by-char with extra ``tracking`` px between glyphs.
     Returns the x just past the last glyph."""
     cx = float(x)
     for ch in text:
-        draw.text((cx, y), ch, font=font, fill=fill, anchor=anchor)
+        draw.text((cx, y), ch, font=font, fill=fill, anchor=anchor,
+                  stroke_width=stroke_width, stroke_fill=stroke_fill)
         cx += draw.textlength(ch, font=font) + tracking
     return cx
+
+
+# --- Photo background helpers ---------------------------------------------
+
+def _fill_photo(path: str) -> Image.Image | None:
+    """Open ``path``, scale + center-crop to exactly WxH (fill, no distortion)."""
+    try:
+        photo = Image.open(path).convert("RGB")
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not open slide photo %s (%s); using solid bg", path, exc)
+        return None
+    pw, ph = photo.size
+    scale = max(W / pw, H / ph)
+    photo = photo.resize((max(1, round(pw * scale)), max(1, round(ph * scale))), Image.LANCZOS)
+    sw, sh = photo.size
+    left = (sw - W) // 2
+    top = (sh - H) // 2
+    return photo.crop((left, top, left + W, top + H))
+
+
+def _scrim_mask(band_top: int, band_bottom: int, peak_alpha: float = BAND_PEAK_ALPHA) -> Image.Image:
+    """Vertical black-alpha mask: OVERLAY_BASE_ALPHA everywhere, ramping up to
+    ``peak_alpha`` across the text band [band_top, band_bottom]."""
+    band_top = max(0, min(H, band_top))
+    band_bottom = max(band_top, min(H, band_bottom))
+    base = int(OVERLAY_BASE_ALPHA * 255)
+    peak = int(peak_alpha * 255)
+    col = Image.new("L", (1, H))
+    px = col.load()
+    for y in range(H):
+        if band_top <= y <= band_bottom:
+            a = peak
+        else:
+            d = (band_top - y) if y < band_top else (y - band_bottom)
+            a = peak - (peak - base) * min(d / BAND_FEATHER, 1.0)
+        px[0, y] = int(a)
+    return col.resize((W, H))
+
+
+def _photo_canvas(bg_path: str | None, band_top: int, band_bottom: int,
+                  peak_alpha: float = BAND_PEAK_ALPHA) -> tuple[Image.Image, ImageDraw.ImageDraw]:
+    """Build a darkened full-bleed photo canvas, or fall back to the solid BG.
+
+    The flat overlay + gradient scrim guarantee a dark, readable surface; the
+    text band is pushed to ``peak_alpha`` black so body copy is legible over any
+    photo.
+    """
+    photo = _fill_photo(bg_path) if bg_path else None
+    if photo is None:
+        img = Image.new("RGB", (W, H), BG)
+        return img, ImageDraw.Draw(img)
+    black = Image.new("RGB", (W, H), (0, 0, 0))
+    img = Image.composite(black, photo, _scrim_mask(band_top, band_bottom, peak_alpha))
+    return img, ImageDraw.Draw(img)
+
+
+def _draw_ghost_number_overlay(img: Image.Image, n: int) -> None:
+    """Composite the giant serif number as a faint white watermark (mutates img)."""
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(overlay).text((50, -120), f"{n:02d}", font=_serif(GHOST_SIZE),
+                                 fill=(*GHOST_WHITE, GHOST_ALPHA), anchor="la")
+    img.paste(Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB"), (0, 0))
 
 
 def _eyebrow_block_h() -> int:
@@ -162,7 +240,8 @@ def _draw_eyebrow(draw: ImageDraw.ImageDraw, label: str, y: int) -> int:
     draw.rectangle([LEFT, y, LEFT + TICK_W, y + TICK_H], fill=ACCENT)
     font = _sans(EYEBROW_SIZE)
     text_y = y + TICK_H + 24
-    _draw_tracked(draw, LEFT, text_y, label.upper(), font, ACCENT, EYEBROW_TRACKING, anchor="la")
+    _draw_tracked(draw, LEFT, text_y, label.upper(), font, ACCENT, EYEBROW_TRACKING,
+                  anchor="la", stroke_width=TEXT_STROKE_W)
     ascent, descent = font.getmetrics()
     return text_y + ascent + descent
 
@@ -170,23 +249,15 @@ def _draw_eyebrow(draw: ImageDraw.ImageDraw, label: str, y: int) -> int:
 def _draw_body(draw: ImageDraw.ImageDraw, lines: list[str], font: ImageFont.FreeTypeFont, lh: int, top: int) -> None:
     y = top
     for line in lines:
-        draw.text((LEFT, y), line, font=font, fill=BODY, anchor="la")
+        draw.text((LEFT, y), line, font=font, fill=BODY, anchor="la",
+                  stroke_width=TEXT_STROKE_W, stroke_fill=TEXT_STROKE)
         y += lh
-
-
-def _draw_ghost_number(draw: ImageDraw.ImageDraw, n: int) -> int:
-    """Giant ghosted serif number bleeding off the top edge. Returns its bottom y."""
-    font = _serif(GHOST_SIZE)
-    text = f"{n:02d}"
-    x, y = 50, -120  # negative y bleeds the number off the top
-    draw.text((x, y), text, font=font, fill=GHOST, anchor="la")
-    return draw.textbbox((x, y), text, font=font, anchor="la")[3]
 
 
 def _draw_footer(draw: ImageDraw.ImageDraw, active: int, total: int = 5) -> None:
     """Wordmark bottom-left + ``total`` progress dots bottom-right (``active`` yellow)."""
     _draw_tracked(draw, LEFT, FOOTER_CY, "THE MINDSET MENTOR", _sans(FOOTER_SIZE),
-                  MUTED, FOOTER_TRACKING, anchor="lm")
+                  MUTED, FOOTER_TRACKING, anchor="lm", stroke_width=TEXT_STROKE_W)
     r, gap = 7, 26
     for i in range(total):
         cx = (W - RIGHT) - (total - 1 - i) * gap
@@ -194,39 +265,46 @@ def _draw_footer(draw: ImageDraw.ImageDraw, active: int, total: int = 5) -> None
         draw.ellipse([cx - r, FOOTER_CY - r, cx + r, FOOTER_CY + r], fill=color)
 
 
-def _canvas() -> tuple[Image.Image, ImageDraw.ImageDraw]:
-    img = Image.new("RGB", (W, H), BG)
-    return img, ImageDraw.Draw(img)
+def _measure_draw() -> ImageDraw.ImageDraw:
+    """A throwaway draw context for text measurement before the canvas exists."""
+    return ImageDraw.Draw(Image.new("RGB", (W, H)))
 
 
-def _render_cover(path: str, hook: str, idx: int) -> None:
-    img, draw = _canvas()
+def _render_cover(path: str, hook: str, idx: int, bg_path: str | None) -> None:
     eb_h = _eyebrow_block_h()
-    font, lines, lh = _fit_body(draw, hook, BODY_W, SAFE_H - eb_h - EYEBROW_GAP)
+    font, lines, lh = _fit_body(_measure_draw(), hook, BODY_W, SAFE_H - eb_h - EYEBROW_GAP)
     # Center the whole (eyebrow + body) block vertically in the safe area.
     block_h = eb_h + EYEBROW_GAP + lh * len(lines)
     top = SAFE_TOP + (SAFE_H - block_h) // 2
+
+    img, draw = _photo_canvas(bg_path, top, top + block_h)
     _draw_eyebrow(draw, "WATCH THIS", top)
     _draw_body(draw, lines, font, lh, top + eb_h + EYEBROW_GAP)
     _draw_footer(draw, idx)
     img.save(path)
-    logger.info("Rendered slide: %s (cover, centered)", os.path.basename(path))
+    logger.info("Rendered slide: %s (cover, %s)", os.path.basename(path),
+                "photo" if bg_path else "solid")
 
 
-def _render_insight(path: str, number: int, text: str, idx: int) -> None:
-    img, draw = _canvas()
-    ghost_bottom = _draw_ghost_number(draw, number)
-    eyebrow_bottom = _draw_eyebrow(draw, "INSIGHT", int(ghost_bottom) + 30)
-    body_top = eyebrow_bottom + 36
-    font, lines, lh = _fit_body(draw, text, BODY_W, BODY_BOTTOM - body_top)
+def _render_insight(path: str, number: int, text: str, idx: int, bg_path: str | None) -> None:
+    md = _measure_draw()
+    ghost_bottom = md.textbbox((50, -120), f"{number:02d}", font=_serif(GHOST_SIZE), anchor="la")[3]
+    eyebrow_top = int(ghost_bottom) + 30
+    body_top = eyebrow_top + _eyebrow_block_h() + 36
+    font, lines, lh = _fit_body(md, text, BODY_W, BODY_BOTTOM - body_top)
+    body_bottom = body_top + lh * len(lines)
+
+    img, draw = _photo_canvas(bg_path, eyebrow_top, body_bottom, peak_alpha=INSIGHT_BAND_PEAK_ALPHA)
+    _draw_ghost_number_overlay(img, number)  # faint white watermark under the text
+    _draw_eyebrow(draw, "INSIGHT", eyebrow_top)
     _draw_body(draw, lines, font, lh, body_top)
     _draw_footer(draw, idx)
     img.save(path)
-    logger.info("Rendered slide: %s (insight %02d)", os.path.basename(path), number)
+    logger.info("Rendered slide: %s (insight %02d, %s)", os.path.basename(path), number,
+                "photo" if bg_path else "solid")
 
 
-def _render_quote(path: str, quote: str, attribution: str | None, idx: int) -> None:
-    img, draw = _canvas()
+def _render_quote(path: str, quote: str, attribution: str | None, idx: int, bg_path: str | None) -> None:
     eb_h = _eyebrow_block_h()
     text = f"“{quote}”"  # curly opening/closing quotes
 
@@ -236,21 +314,23 @@ def _render_quote(path: str, quote: str, attribution: str | None, idx: int) -> N
         a_ascent, a_descent = _sans(ATTR_SIZE).getmetrics()
         attr_h = ATTR_GAP + a_ascent + a_descent
 
-    font, lines, lh = _fit_body(draw, text, BODY_W, SAFE_H - eb_h - EYEBROW_GAP - attr_h)
+    font, lines, lh = _fit_body(_measure_draw(), text, BODY_W, SAFE_H - eb_h - EYEBROW_GAP - attr_h)
     body_h = lh * len(lines)
     block_h = eb_h + EYEBROW_GAP + body_h + attr_h
     top = SAFE_TOP + (SAFE_H - block_h) // 2
 
+    img, draw = _photo_canvas(bg_path, top, top + block_h)
     _draw_eyebrow(draw, "QUOTE", top)
     body_top = top + eb_h + EYEBROW_GAP
     _draw_body(draw, lines, font, lh, body_top)
     if attribution:
         ay = body_top + body_h + ATTR_GAP
-        draw.text((LEFT, ay), f"— {attribution}", font=_sans(ATTR_SIZE), fill=MUTED_YELLOW, anchor="la")
+        draw.text((LEFT, ay), f"— {attribution}", font=_sans(ATTR_SIZE), fill=MUTED_YELLOW,
+                  anchor="la", stroke_width=TEXT_STROKE_W, stroke_fill=TEXT_STROKE)
     _draw_footer(draw, idx)
     img.save(path)
-    logger.info("Rendered slide: %s (quote, centered%s)", os.path.basename(path),
-                ", attributed" if attribution else "")
+    logger.info("Rendered slide: %s (quote, %s%s)", os.path.basename(path),
+                "photo" if bg_path else "solid", ", attributed" if attribution else "")
 
 
 # Optional attribution keys the extraction MIGHT carry. The current ai_extract
@@ -268,11 +348,40 @@ def _attribution(highlights: dict) -> str | None:
     return None
 
 
-def build_slides(highlights: dict) -> list[str]:
-    """Render the 5-slide editorial deck; return ordered PNG paths.
+def _slide_queries(queries: list[str], n_insights: int) -> list[str | None]:
+    """Map ai_extract's search_queries 1:1 onto the slide order.
+
+    ai_extract now emits exactly one art-directed query per slide, in slide
+    order: [0] cover, [1..n] insights, [last] quote. Each slide takes its own
+    query (no cycling); a missing entry stays None so that slide falls back to
+    the solid background.
+    """
+    total = 2 + n_insights
+    queries = [q for q in queries if isinstance(q, str) and q.strip()]
+    return [queries[i] if i < len(queries) else None for i in range(total)]
+
+
+def _fetch_slide_backgrounds(queries: list[str], n_insights: int, force: bool) -> list[str | None]:
+    """Fetch one portrait Pexels photo per slide -> tmp/slide_bg_<n>.jpg.
+
+    Degrades per slide: a query that yields nothing (or a Pexels outage) leaves
+    that slide's entry None so it renders on the solid background instead.
+    """
+    os.makedirs(config.TMP_DIR, exist_ok=True)
+    paths: list[str | None] = []
+    for i, query in enumerate(_slide_queries(queries, n_insights)):
+        cache = os.path.join(config.TMP_DIR, f"slide_bg_{i}.jpg")
+        paths.append(pexels_bg.fetch_photo(query, cache, force=force) if query else None)
+    return paths
+
+
+def build_slides(highlights: dict, force: bool = False) -> list[str]:
+    """Render the editorial deck on full-bleed Pexels photo backgrounds.
 
     Order: COVER (hook), INSIGHT 01-03 (insights), QUOTE (best_quote).
-    Requires keys: hook, insights (>=1, uses up to 3), best_quote.
+    Requires keys: hook, insights (>=1, uses up to 3), best_quote. Uses
+    search_queries for the photo backgrounds; each slide degrades to the solid
+    dark background if its photo can't be fetched. ``force`` re-downloads photos.
     """
     os.makedirs(config.SLIDE_DIR, exist_ok=True)
 
@@ -282,6 +391,9 @@ def build_slides(highlights: dict) -> list[str]:
     if not hook or not insights or not quote:
         raise ValueError("highlights needs hook, insights, and best_quote to build the deck")
 
+    insights = insights[:3]
+    bgs = _fetch_slide_backgrounds(highlights.get("search_queries") or [], len(insights), force)
+
     paths: list[str] = []
 
     def _path(i: int) -> str:
@@ -289,10 +401,12 @@ def build_slides(highlights: dict) -> list[str]:
         paths.append(p)
         return p
 
-    _render_cover(_path(0), hook, idx=0)
-    for n, insight in enumerate(insights[:3], start=1):
-        _render_insight(_path(len(paths)), n, insight, idx=len(paths) - 1)
-    _render_quote(_path(len(paths)), quote, _attribution(highlights), idx=len(paths) - 1)
+    _render_cover(_path(0), hook, idx=0, bg_path=bgs[0])
+    for n, insight in enumerate(insights, start=1):
+        i = len(paths)
+        _render_insight(_path(i), n, insight, idx=i, bg_path=bgs[i])
+    qi = len(paths)
+    _render_quote(_path(qi), quote, _attribution(highlights), idx=qi, bg_path=bgs[qi])
 
     logger.info("Built %d slides in %s", len(paths), config.SLIDE_DIR)
     return paths
@@ -311,6 +425,12 @@ SAMPLE_HIGHLIGHTS = {
     "clip_start": 2355,
     "clip_end": 2415,
     "hashtags": ["#MindsetMentor", "#NervousSystem", "#DigitalDetox"],
+    "search_queries": [
+        "person sitting alone sunset",
+        "city crowd phone screens",
+        "reading book natural light",
+        "solo forest walk morning",
+    ],
 }
 
 
