@@ -256,7 +256,7 @@ def _draw_body(draw: ImageDraw.ImageDraw, lines: list[str], font: ImageFont.Free
 
 def _draw_footer(draw: ImageDraw.ImageDraw, active: int, total: int = 5) -> None:
     """Wordmark bottom-left + ``total`` progress dots bottom-right (``active`` yellow)."""
-    _draw_tracked(draw, LEFT, FOOTER_CY, "THE MINDSET MENTOR", _sans(FOOTER_SIZE),
+    _draw_tracked(draw, LEFT, FOOTER_CY, config.BRAND_NAME.upper(), _sans(FOOTER_SIZE),
                   MUTED, FOOTER_TRACKING, anchor="lm", stroke_width=TEXT_STROKE_W)
     r, gap = 7, 26
     for i in range(total):

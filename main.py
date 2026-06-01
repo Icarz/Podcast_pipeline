@@ -60,14 +60,14 @@ logger = logging.getLogger("pipeline")
 
 
 def _display_name(feed_arg: str) -> str:
-    """A human-readable podcast name for the watermark.
+    """The brand name for the watermark.
 
-    Known feed keys become title-case (``mindset_mentor`` -> ``Mindset
-    Mentor``); a raw URL yields an empty name (build_video then skips the
-    watermark) since fetch_latest doesn't return the show title.
+    Known feed keys use the single-source brand (``config.BRAND_NAME``); a raw
+    URL yields an empty name (build_video then skips the watermark) since those
+    one-off runs aren't branded.
     """
     if feed_arg in config.PODCAST_FEEDS:
-        return feed_arg.replace("_", " ").title()
+        return config.BRAND_NAME
     return ""
 
 

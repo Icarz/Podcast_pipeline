@@ -139,7 +139,11 @@ HOOK_COLOR = "white"
 HOOK_DURATION = 3.0                  # seconds
 HOOK_TOP = 0.08                      # fraction of height
 
-# Podcast-name watermark (right side). Kept well inside the safe area — the
+# Brand name — single source of truth for the video watermark AND the slide
+# footer wordmark. Change it here; both renderers read from this constant.
+BRAND_NAME = "Icarus Wings"
+
+# Brand watermark (right side). Kept well inside the safe area — the
 # bottom of the pill sits at WATERMARK_BASELINE_Y so there's clear padding below.
 # Solid white text on a semi-transparent dark rounded pill so it reads clearly
 # on any background while staying small and subtle.

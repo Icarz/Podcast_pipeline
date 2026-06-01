@@ -488,7 +488,7 @@ if __name__ == "__main__":
 
     out = build_video(
         audio_path, transcript["words"], highlights,
-        podcast_name="The Mindset Mentor", background_images=backgrounds,
+        podcast_name=config.BRAND_NAME, background_images=backgrounds,
     )
 
     # Save 3 sample frames spread across the clip so each background is visible.
