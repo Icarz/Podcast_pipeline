@@ -127,7 +127,7 @@ Copy `.env.example` → `.env`. Keys grouped:
 - **AI:** `ANTHROPIC_API_KEY` (Claude), `GROQ_API_KEY` (Whisper), `GEMINI_API_KEY` (images).
 - **Backgrounds:** `PEXELS_API_KEY` (stock video + slide photos).
 - **Storage (R2, S3-compatible via boto3):** `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_ACCESS_KEY_ID`, `CLOUDFLARE_R2_SECRET_ACCESS_KEY`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_PUBLIC_URL`.
-- **YouTube Data API (OAuth):** `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`, `YOUTUBE_CHANNEL_ID`.
+- **YouTube Data API (OAuth):** `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`. (Uploads target whatever channel the refresh token was authorized for — no channel ID needed.)
 - **Meta Graph API (Instagram Reels):** `META_APP_ID`, `META_APP_SECRET`, `META_ACCESS_TOKEN`, `META_IG_USER_ID`.
 
 Modules call `load_dotenv()` themselves so they work standalone.
