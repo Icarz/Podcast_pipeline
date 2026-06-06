@@ -35,6 +35,41 @@ def _sanitize(text: str, max_len: int = 60) -> str:
     return (text[:max_len].rstrip("_")) or "untitled"
 
 
+def _entry_guid(entry) -> str | None:
+    """The stable per-episode id from a feed entry.
+
+    feedparser normalizes the RSS ``<guid>`` onto ``entry.id``; we fall back to
+    the raw ``guid``, then the episode ``link``, then the ``title`` so the
+    posted-history key is never empty for a well-formed feed.
+    """
+    return entry.get("id") or entry.get("guid") or entry.get("link") or entry.get("title")
+
+
+def _parse_feed(feed_url: str):
+    """Parse ``feed_url`` (browser headers) and return the feedparser result.
+
+    Raises ValueError if the feed can't be parsed or has no entries, so callers
+    can treat an unreachable/empty feed as a clean no-op.
+    """
+    logger.info("Parsing feed: %s", feed_url)
+    feed = feedparser.parse(feed_url, request_headers=BROWSER_HEADERS)
+    if feed.bozo and not feed.entries:
+        raise ValueError(f"Failed to parse feed {feed_url}: {feed.bozo_exception}")
+    if not feed.entries:
+        raise ValueError(f"No entries found in feed: {feed_url}")
+    return feed
+
+
+def _entry_metadata(entry) -> dict:
+    """The non-audio metadata shared by ``peek_latest`` and ``fetch_latest``."""
+    return {
+        "title": entry.get("title"),
+        "guid": _entry_guid(entry),
+        "description": entry.get("summary") or entry.get("description"),
+        "link": entry.get("link"),
+    }
+
+
 def _extract_audio_url(entry) -> str | None:
     """Return the first audio enclosure URL on a feed ``entry``, if any."""
     for enclosure in entry.get("enclosures", []):
@@ -66,20 +101,26 @@ def _download_audio(audio_url: str, basename: str) -> str:
     return path
 
 
-def fetch_latest(feed_url: str) -> dict:
-    """Fetch ``feed_url``, download the latest episode's audio, and return its metadata.
+def parse_latest(feed_url: str):
+    """Parse ``feed_url`` ONCE and return ``(feed, latest_entry, metadata)``.
 
-    Returns a dict with ``title``, ``audio_path``, ``description``, and ``link``.
+    Lets a caller read the latest episode's metadata (e.g. the GUID for the
+    posted-history pre-check) and then download that SAME parsed entry via
+    :func:`download_latest` — so a full ``--auto`` run hits the feed only once.
+    Raises ValueError on an unreachable/empty feed.
     """
-    logger.info("Parsing feed: %s", feed_url)
-    feed = feedparser.parse(feed_url, request_headers=BROWSER_HEADERS)
-
-    if feed.bozo and not feed.entries:
-        raise ValueError(f"Failed to parse feed {feed_url}: {feed.bozo_exception}")
-    if not feed.entries:
-        raise ValueError(f"No entries found in feed: {feed_url}")
-
+    feed = _parse_feed(feed_url)
     entry = feed.entries[0]
+    logger.info("Latest episode: %s", entry.get("title"))
+    return feed, entry, _entry_metadata(entry)
+
+
+def download_latest(feed, entry) -> dict:
+    """Download ``entry``'s audio (``feed`` supplies the show name) and return its
+    metadata dict plus ``audio_path``.
+
+    Pairs with :func:`parse_latest` so the feed is parsed only once per run.
+    """
     audio_url = _extract_audio_url(entry)
     if not audio_url:
         raise ValueError("Latest episode has no audio enclosure")
@@ -88,16 +129,32 @@ def fetch_latest(feed_url: str) -> dict:
     title_slug = _sanitize(entry.get("title", ""), max_len=config.EPISODE_TITLE_MAX_LEN)
     basename = f"{feed_name}_{title_slug}"
 
-    logger.info("Latest episode: %s", entry.get("title"))
     logger.info("Downloading audio: %s -> tmp/%s.mp3", audio_url, basename)
     audio_path = _download_audio(audio_url, basename)
 
-    return {
-        "title": entry.get("title"),
-        "audio_path": audio_path,
-        "description": entry.get("summary") or entry.get("description"),
-        "link": entry.get("link"),
-    }
+    meta = _entry_metadata(entry)
+    meta["audio_path"] = audio_path
+    return meta
+
+
+def peek_latest(feed_url: str) -> dict:
+    """Latest episode metadata WITHOUT downloading audio (rotation pre-check).
+
+    Returns ``title``, ``guid``, ``description``, ``link`` (no ``audio_path``).
+    """
+    logger.info("Peeking latest episode (no download): %s", feed_url)
+    _, _, meta = parse_latest(feed_url)
+    return meta
+
+
+def fetch_latest(feed_url: str) -> dict:
+    """Parse + download the latest episode in one call (manual runs / harness).
+
+    Returns ``title``, ``guid``, ``audio_path``, ``description``, ``link``. Parses
+    the feed exactly once (delegates to :func:`parse_latest` + :func:`download_latest`).
+    """
+    feed, entry, _ = parse_latest(feed_url)
+    return download_latest(feed, entry)
 
 
 if __name__ == "__main__":

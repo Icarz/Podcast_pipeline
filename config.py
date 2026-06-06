@@ -17,17 +17,40 @@ SLIDE_DIR = os.path.join(OUTPUT_DIR, "slides")
 
 LOG_FILE = os.path.join(LOGS_DIR, "pipeline.log")
 
-# --- Podcast RSS feeds (verified live; select by key) ---
+# --- Podcast RSS feeds (verified live June 2026; select by key) ---
+# Each value is the show's official RSS URL — verify against the source in the
+# trailing comment. The first four are the weekly ROTATION (see below).
 PODCAST_FEEDS = {
-    "mindset_mentor": "https://feeds.simplecast.com/rpKQEwel",
+    # Modern Wisdom — Chris Williamson (Megaphone)   https://feeds.megaphone.fm/modernwisdom
     "modern_wisdom":  "https://feeds.megaphone.fm/modernwisdom",
+    # Huberman Lab — Andrew Huberman (Megaphone)     https://feeds.megaphone.fm/hubermanlab
     "huberman_lab":   "https://feeds.megaphone.fm/hubermanlab",
+    # The Daily Stoic — Ryan Holiday (Art19)         https://rss.art19.com/the-daily-stoic
     "daily_stoic":    "https://rss.art19.com/the-daily-stoic",
+    # The Mindset Mentor — Rob Dial (Simplecast)     https://feeds.simplecast.com/rpKQEwel
+    "mindset_mentor": "https://feeds.simplecast.com/rpKQEwel",
+    # Not in the rotation; kept for manual runs.     https://feeds.simplecast.com/UCwaTX1J
     "mel_robbins":    "https://feeds.simplecast.com/UCwaTX1J",
 }
 
 # Default feed used when none is specified.
 DEFAULT_FEED = "mindset_mentor"
+
+# --- Weekly multi-podcast rotation ---
+# main.py --auto picks today's feed from here by weekday. Python's
+# date.weekday() is Mon=0, Tue=1, ..., Sun=6. Any weekday NOT listed is a
+# non-posting day: --auto logs "no posting day today" and exits 0.
+ROTATION = {
+    0: "modern_wisdom",   # Monday
+    2: "huberman_lab",    # Wednesday
+    4: "daily_stoic",     # Friday
+    5: "mindset_mentor",  # Saturday
+}
+
+# Posted-history log: which episodes have already been uploaded (keyed by RSS
+# GUID) so --auto never re-posts the same episode. Written ONLY after a
+# successful YouTube upload. See modules/posted_history.py.
+POSTED_HISTORY_PATH = os.path.join(TMP_DIR, "posted_history.json")
 
 # --- HTTP ---
 # Browser-like headers so feeds/CDNs that block default clients still respond.

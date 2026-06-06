@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import sys
+from datetime import date
 
 from dotenv import load_dotenv
 
@@ -30,6 +31,7 @@ import config
 from modules import (
     ai_extract,
     background,
+    posted_history,
     rss_ingest,
     slide_gen,
     storage,
@@ -37,6 +39,9 @@ from modules import (
     video_gen,
     youtube_publish,
 )
+
+# Mon=0 .. Sun=6 (matches date.weekday() and config.ROTATION keys).
+_WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 # NOTE: instagram_publish is deliberately NOT imported — its Meta Graph flow is
 # still a NotImplementedError scaffold, so Instagram/TikTok are handled as
@@ -195,20 +200,27 @@ def _publish_stage(
     return result
 
 
-def run(feed_arg: str, privacy_status: str = "private") -> dict:
+def run(feed_arg: str, episode: dict | None = None, privacy_status: str = "private") -> dict:
     """Run ingest -> render -> publish for the latest episode of ``feed_arg``.
 
     ``feed_arg`` is a key in ``config.PODCAST_FEEDS`` or a raw RSS URL.
-    ``privacy_status`` is forwarded to the YouTube upload (default ``"private"``).
-    Returns a summary dict (episode, highlights, video_path, slides, publish).
+    ``episode`` may be a pre-ingested episode dict (with ``audio_path``) — passed
+    by :func:`run_auto` so the feed it already parsed for the GUID pre-check is
+    NOT parsed/downloaded a second time. When ``None`` (manual runs) the feed is
+    parsed + downloaded here. ``privacy_status`` is forwarded to YouTube
+    (default ``"private"``). Returns a summary dict.
     """
     feed_url = config.PODCAST_FEEDS.get(feed_arg, feed_arg)
     podcast_name = _display_name(feed_arg)
     logger.info("Starting pipeline | feed=%s -> %s", feed_arg, feed_url)
 
-    # 1) Ingest: parse the feed and download the latest episode's audio.
-    logger.info("[1/6] Ingest: latest episode from feed")
-    episode = rss_ingest.fetch_latest(feed_url)
+    # 1) Ingest: parse the feed and download the latest episode's audio (unless
+    #    an already-ingested episode was handed in by run_auto).
+    if episode is None:
+        logger.info("[1/6] Ingest: latest episode from feed")
+        episode = rss_ingest.fetch_latest(feed_url)
+    else:
+        logger.info("[1/6] Ingest: using pre-fetched episode (feed parsed once)")
     audio_path = episode["audio_path"]
     logger.info("Episode: %s", episode.get("title"))
     if not os.path.exists(audio_path):
@@ -245,6 +257,21 @@ def run(feed_arg: str, privacy_status: str = "private") -> dict:
         episode, highlights, video_path, slides, privacy_status=privacy_status
     )
 
+    # 8) Record the episode in the posted-history log ONLY on a successful
+    #    YouTube upload, so a failed upload leaves no entry and the next --auto
+    #    run retries this same episode instead of skipping it.
+    if publish.get("youtube_url") and not publish.get("youtube_error"):
+        posted_history.record(
+            guid=episode.get("guid"),
+            feed=feed_arg,
+            title=episode.get("title"),
+            youtube_url=publish["youtube_url"],
+        )
+    elif publish.get("youtube_error"):
+        logger.warning(
+            "YouTube upload failed; NOT recording to posted history (next run will retry)"
+        )
+
     logger.info("Pipeline complete for: %s", episode.get("title"))
     return {
         "episode": episode,
@@ -255,6 +282,53 @@ def run(feed_arg: str, privacy_status: str = "private") -> dict:
         "slides": slides,
         "publish": publish,
     }
+
+
+def run_auto(privacy_status: str = "private") -> dict | None:
+    """Rotation entry point: pick today's feed and process its latest episode.
+
+    Resolves today's weekday against ``config.ROTATION`` and:
+      * not a posting day  -> log and return None (caller exits 0),
+      * feed unreachable    -> log and return None (caller exits 0),
+      * latest already posted (GUID in the history log) -> log and return None,
+      * otherwise           -> run the full pipeline via :func:`run`.
+
+    The GUID pre-check uses :func:`rss_ingest.peek_latest`, which parses the feed
+    WITHOUT downloading audio — so an already-posted or unreachable feed costs no
+    bandwidth. Returns the :func:`run` result dict, or None when there is nothing
+    to do.
+    """
+    weekday = date.today().weekday()
+    feed_key = config.ROTATION.get(weekday)
+    if feed_key is None:
+        logger.info("Auto mode: no posting day today (%s); nothing to do", _WEEKDAY_NAMES[weekday])
+        return None
+
+    feed_url = config.PODCAST_FEEDS[feed_key]
+    logger.info("Auto mode: %s -> feed '%s'", _WEEKDAY_NAMES[weekday], feed_key)
+
+    # Parse the feed ONCE here. A feed that is unreachable / unparseable / empty
+    # is a clean no-op, not a failure, so the next day's scheduled run is
+    # unaffected. We reuse this same parsed entry for the download below, so the
+    # whole --auto run hits the feed exactly once.
+    try:
+        feed, entry, latest = rss_ingest.parse_latest(feed_url)
+    except Exception as exc:  # noqa: BLE001 - feed problems must not break scheduling
+        logger.warning("Auto mode: feed '%s' unavailable (%s); exiting cleanly", feed_key, exc)
+        return None
+
+    guid = latest.get("guid")
+    if posted_history.is_posted(guid):
+        logger.info(
+            "Auto mode: latest episode already posted, exiting (%r, guid=%s)",
+            latest.get("title"), guid,
+        )
+        return None
+
+    logger.info("Auto mode: new episode to process: %r (guid=%s)", latest.get("title"), guid)
+    # Download the SAME parsed entry (no second feed parse) and hand it to run().
+    episode = rss_ingest.download_latest(feed, entry)
+    return run(feed_key, episode=episode, privacy_status=privacy_status)
 
 
 def _print_summary(result: dict) -> None:
@@ -315,7 +389,16 @@ if __name__ == "__main__":
         default=config.DEFAULT_FEED,
         help=(
             "Feed name (one of: " + ", ".join(config.PODCAST_FEEDS) + ") "
-            "or a raw RSS URL. Defaults to " + config.DEFAULT_FEED
+            "or a raw RSS URL. Defaults to " + config.DEFAULT_FEED + ". Ignored with --auto."
+        ),
+    )
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help=(
+            "Rotation mode: pick today's feed from config.ROTATION by weekday and "
+            "process its latest episode. Exits 0 cleanly if today isn't a posting "
+            "day, the feed is unreachable, or the latest episode was already posted."
         ),
     )
     parser.add_argument(
@@ -327,10 +410,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     try:
-        result = run(args.feed, privacy_status=args.privacy)
+        if args.auto:
+            result = run_auto(privacy_status=args.privacy)
+            if result is None:
+                # Nothing to do (no posting day / already posted / feed down).
+                sys.exit(0)
+        else:
+            result = run(args.feed, privacy_status=args.privacy)
     except Exception:
-        # Log the full traceback (the preceding "[n/6]" line shows which step
-        # was running) and exit non-zero so failures never pass silently.
+        # Log the full traceback (the preceding "[n/7]" line shows which step
+        # was running) and exit non-zero so genuine pipeline failures never pass
+        # silently. (Feed/no-episode no-ops are handled inside run_auto and exit 0.)
         logger.exception("Pipeline FAILED")
         sys.exit(1)
 
