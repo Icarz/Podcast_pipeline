@@ -4,8 +4,12 @@ End-to-end flow for the latest episode of a feed:
     RSS ingest -> transcribe -> AI extract -> background select
     -> video render (karaoke MP4) -> slide deck (PNGs)
 
-Storage and publish (R2 / YouTube / Instagram) are intentionally SKIPPED for
-now — youtube_publish/instagram_publish still raise NotImplementedError.
+After rendering, the publish stage is resilient and best-effort:
+    R2 upload (video + slides) -> YouTube Short (default private)
+    -> Instagram + TikTok logged as MANUAL POST reminders.
+A failure in R2 or YouTube is logged but never crashes the run or discards
+the already-rendered video/slides. Instagram is NOT auto-published (the Meta
+flow is a NotImplementedError scaffold) — we only log the file paths/URLs.
 
 Run:
     .\\venv\\Scripts\\python.exe main.py mindset_mentor   # feed key
@@ -28,12 +32,15 @@ from modules import (
     background,
     rss_ingest,
     slide_gen,
+    storage,
     transcribe,
     video_gen,
+    youtube_publish,
 )
 
-# NOTE: storage / youtube_publish / instagram_publish are deliberately NOT
-# imported — those stages are skipped until the publish modules are ready.
+# NOTE: instagram_publish is deliberately NOT imported — its Meta Graph flow is
+# still a NotImplementedError scaffold, so Instagram/TikTok are handled as
+# MANUAL POST log reminders rather than real API calls (see _publish_stage).
 
 load_dotenv()
 
@@ -111,11 +118,89 @@ def _load_or_build_plan(audio_path: str) -> tuple[dict, dict]:
     return transcript, highlights
 
 
-def run(feed_arg: str) -> dict:
-    """Run ingest -> render for the latest episode of ``feed_arg``.
+def _publish_stage(
+    episode: dict,
+    highlights: dict,
+    video_path: str,
+    slides: list[str],
+    privacy_status: str = "private",
+) -> dict:
+    """Best-effort publish: R2 upload -> YouTube -> manual-post reminders.
+
+    The content already rendered successfully by the time we get here, so every
+    external step is wrapped: a failure is logged clearly but NEVER raised, so a
+    flaky upload can't throw away the generated video/slides. Returns a dict of
+    everything we managed to do (URLs and/or per-step error strings) for the
+    end-of-run summary.
+
+    ``privacy_status`` is forwarded to YouTube (defaults to ``"private"`` so a
+    test run never goes public — flip to ``"public"`` manually after review).
+    """
+    result: dict = {
+        "video_url": None,
+        "slide_urls": [],
+        "youtube_url": None,
+        "r2_error": None,
+        "youtube_error": None,
+        "privacy_status": privacy_status,
+    }
+
+    # --- 1) R2 upload: video first, then each slide. -----------------------
+    logger.info("[publish] R2: upload video + %d slide(s)", len(slides))
+    try:
+        result["video_url"] = storage.upload(video_path)
+        logger.info("[publish] R2 video URL: %s", result["video_url"])
+        for i, slide_path in enumerate(slides, 1):
+            slide_url = storage.upload(slide_path)
+            result["slide_urls"].append(slide_url)
+            logger.info("[publish] R2 slide %d URL: %s", i, slide_url)
+    except Exception as exc:  # noqa: BLE001 - publish must never crash the run
+        result["r2_error"] = str(exc)
+        logger.exception("[publish] R2 upload FAILED (continuing): %s", exc)
+
+    # --- 2) YouTube Short (private by default). ----------------------------
+    logger.info("[publish] YouTube: upload Short (%s)", privacy_status)
+    try:
+        result["youtube_url"] = youtube_publish.publish(
+            video_path, episode, highlights, privacy_status=privacy_status
+        )
+        logger.info("[publish] YouTube URL: %s", result["youtube_url"])
+    except Exception as exc:  # noqa: BLE001 - publish must never crash the run
+        result["youtube_error"] = str(exc)
+        logger.exception("[publish] YouTube upload FAILED (continuing): %s", exc)
+
+    # --- 3) Instagram: NO API call — log a MANUAL POST reminder. -----------
+    ig_lines = [
+        "[publish] MANUAL POST — Instagram (post by hand):",
+        f"            Reel video (local) : {video_path}",
+    ]
+    if result["video_url"]:
+        ig_lines.append(f"            Reel video (R2)    : {result['video_url']}")
+    ig_lines.append(f"            Carousel slides ({len(slides)}):")
+    for i, slide_path in enumerate(slides, 1):
+        ig_lines.append(f"              {i}. local: {slide_path}")
+        if i - 1 < len(result["slide_urls"]):
+            ig_lines.append(f"                 R2   : {result['slide_urls'][i - 1]}")
+    logger.warning("\n".join(ig_lines))
+
+    # --- 4) TikTok: NO API call — log a MANUAL POST reminder. --------------
+    tt_lines = [
+        "[publish] MANUAL POST — TikTok (post by hand):",
+        f"            Video (local) : {video_path}",
+    ]
+    if result["video_url"]:
+        tt_lines.append(f"            Video (R2)    : {result['video_url']}")
+    logger.warning("\n".join(tt_lines))
+
+    return result
+
+
+def run(feed_arg: str, privacy_status: str = "private") -> dict:
+    """Run ingest -> render -> publish for the latest episode of ``feed_arg``.
 
     ``feed_arg`` is a key in ``config.PODCAST_FEEDS`` or a raw RSS URL.
-    Returns a summary dict (episode, highlights, video_path, slides).
+    ``privacy_status`` is forwarded to the YouTube upload (default ``"private"``).
+    Returns a summary dict (episode, highlights, video_path, slides, publish).
     """
     feed_url = config.PODCAST_FEEDS.get(feed_arg, feed_arg)
     podcast_name = _display_name(feed_arg)
@@ -154,8 +239,11 @@ def run(feed_arg: str) -> dict:
     logger.info("[6/6] Slides: render deck")
     slides = slide_gen.build_slides(highlights)
 
-    # Publish stages are not ready — skip explicitly and loudly.
-    logger.warning("Publish: SKIPPED (storage/youtube/instagram not implemented yet)")
+    # 7) Publish: R2 -> YouTube -> manual reminders (best-effort, never fatal).
+    logger.info("[7/7] Publish: R2 + YouTube + manual reminders")
+    publish = _publish_stage(
+        episode, highlights, video_path, slides, privacy_status=privacy_status
+    )
 
     logger.info("Pipeline complete for: %s", episode.get("title"))
     return {
@@ -165,6 +253,7 @@ def run(feed_arg: str) -> dict:
         "clip_end": ce,
         "video_path": video_path,
         "slides": slides,
+        "publish": publish,
     }
 
 
@@ -181,7 +270,38 @@ def _print_summary(result: dict) -> None:
     print(f"Slides ({len(result['slides'])})  :")
     for p in result["slides"]:
         print(f"              - {p}")
-    print("Publish     : SKIPPED (storage / YouTube / Instagram not implemented)")
+
+    pub = result.get("publish", {})
+    print(line)
+    print("PUBLISH")
+    print(line)
+
+    # YouTube
+    if pub.get("youtube_url"):
+        print(f"YouTube ({pub.get('privacy_status', '?')}) : {pub['youtube_url']}")
+    else:
+        print(f"YouTube     : FAILED — {pub.get('youtube_error') or 'not attempted'}")
+
+    # R2
+    if pub.get("r2_error"):
+        print(f"R2          : FAILED — {pub['r2_error']}")
+    else:
+        print(f"R2 video    : {pub.get('video_url') or '(none)'}")
+        if pub.get("slide_urls"):
+            print(f"R2 slides ({len(pub['slide_urls'])}):")
+            for u in pub["slide_urls"]:
+                print(f"              - {u}")
+
+    # Manual post checklist (Instagram + TikTok)
+    print("MANUAL POST (do by hand):")
+    print(f"  Reel/Video (local) : {result['video_path']}")
+    if pub.get("video_url"):
+        print(f"  Reel/Video (R2)    : {pub['video_url']}")
+    print("  Carousel slides    :")
+    for i, p in enumerate(result["slides"], 1):
+        print(f"    {i}. local: {p}")
+        if pub.get("slide_urls") and i - 1 < len(pub["slide_urls"]):
+            print(f"       R2   : {pub['slide_urls'][i - 1]}")
     print(line, flush=True)
 
 
@@ -198,10 +318,16 @@ if __name__ == "__main__":
             "or a raw RSS URL. Defaults to " + config.DEFAULT_FEED
         ),
     )
+    parser.add_argument(
+        "--privacy",
+        choices=["private", "unlisted", "public"],
+        default="private",
+        help="YouTube visibility for the uploaded Short (default: private)",
+    )
     args = parser.parse_args()
 
     try:
-        result = run(args.feed)
+        result = run(args.feed, privacy_status=args.privacy)
     except Exception:
         # Log the full traceback (the preceding "[n/6]" line shows which step
         # was running) and exit non-zero so failures never pass silently.

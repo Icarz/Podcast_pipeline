@@ -87,11 +87,12 @@ def _cover_image(im: Image.Image, w: int, h: int) -> Image.Image:
     return im.crop((left, top, left + w, top + h))
 
 
-def _ken_burns_clip(arr: np.ndarray, duration: float, pan_x: float, pan_y: float) -> ImageClip:
-    """A slow zoom + pan ("Ken Burns") clip from a frame-sized RGB array.
+def _ken_burns_motion(clip, duration: float, pan_x: float, pan_y: float):
+    """Apply a slow zoom + pan ("Ken Burns") to any frame-sized (w x h) clip.
 
-    The scale stays > 1 throughout so the panned/zoomed image always overfills
-    the frame and never reveals an edge.
+    Works for both still images and (cover-fit) video clips: the scale stays > 1
+    throughout so the panned/zoomed frame always overfills and never reveals an
+    edge. Returns the clip with the time-varying resize/position applied.
     """
     w, h = config.SLIDE_WIDTH, config.SLIDE_HEIGHT
     z0, z1 = config.BG_KENBURNS_ZOOM_FROM, config.BG_KENBURNS_ZOOM_TO
@@ -103,12 +104,17 @@ def _ken_burns_clip(arr: np.ndarray, duration: float, pan_x: float, pan_y: float
     def pos(t: float):
         p = (t / duration) if duration else 0.0
         s = scale(t)
-        # Center the (scaled) image, then drift it across by +/- the pan amount.
+        # Center the (scaled) frame, then drift it across by +/- the pan amount.
         x = (w - w * s) / 2 + pan_x * (p - 0.5) * 2
         y = (h - h * s) / 2 + pan_y * (p - 0.5) * 2
         return (x, y)
 
-    return ImageClip(arr).with_duration(duration).resized(scale).with_position(pos)
+    return clip.with_duration(duration).resized(scale).with_position(pos)
+
+
+def _ken_burns_clip(arr: np.ndarray, duration: float, pan_x: float, pan_y: float) -> ImageClip:
+    """A Ken Burns still: slow zoom + pan over a frame-sized RGB array."""
+    return _ken_burns_motion(ImageClip(arr), duration, pan_x, pan_y)
 
 
 def _slot_layout(window: float, n: int) -> tuple[float, float]:
@@ -148,7 +154,15 @@ def _image_background_layers(window: float, image_paths: list[str]) -> list:
 
 
 def _video_background_layers(window: float, video_paths: list[str]) -> list:
-    """Stock video clips looped/trimmed to their slot, cover-cropped, crossfaded."""
+    """Stock video clips fitted to their slot, cover-cropped, crossfaded.
+
+    A slot is ``seg`` long. We NEVER loop a clip (a short clip looped to fill its
+    slot shows the same footage twice). Instead:
+      * clip natural duration >= seg  -> trim to seg (its own motion is enough);
+      * clip shorter than seg         -> slow it to exactly fill seg (motion
+        plays through once, no loop) and add a slow Ken Burns zoom/pan so the
+        extended slot still feels alive.
+    """
     w, h = config.SLIDE_WIDTH, config.SLIDE_HEIGHT
     n = len(video_paths)
     seg, xfade = _slot_layout(window, n)
@@ -156,10 +170,32 @@ def _video_background_layers(window: float, video_paths: list[str]) -> list:
     layers: list = []
     for i, path in enumerate(video_paths):
         clip = VideoFileClip(path).without_audio()
+        natural = clip.duration
+
+        if natural >= seg:
+            clip = clip.subclipped(0, seg)  # trim long, no loop
+            extended = False
+        else:
+            # Extend WITHOUT looping: slow the footage so it lasts exactly seg.
+            clip = clip.with_effects([vfx.MultiplySpeed(final_duration=seg)])
+            extended = True
+
         scale = max(w / clip.w, h / clip.h)               # cover-fit
         clip = clip.resized(scale)
         clip = clip.cropped(width=w, height=h, x_center=clip.w / 2, y_center=clip.h / 2)
-        clip = clip.with_effects([vfx.Loop(duration=seg)])  # loop short / trim long
+
+        if extended:
+            sign = 1 if i % 2 == 0 else -1  # alternate pan direction for variety
+            pan = config.BG_KENBURNS_PAN * sign
+            clip = _ken_burns_motion(clip, seg, pan, pan)
+            logger.info(
+                "BG slot %d: %.1fs clip < %.1fs slot -> slowed + Ken Burns (no loop)",
+                i + 1, natural, seg,
+            )
+        else:
+            clip = clip.with_duration(seg)
+            logger.info("BG slot %d: %.1fs clip >= %.1fs slot -> trimmed", i + 1, natural, seg)
+
         clip = clip.with_start(i * (seg - xfade))
         if i > 0:
             clip = clip.with_effects([vfx.CrossFadeIn(xfade)])

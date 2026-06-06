@@ -362,15 +362,17 @@ def _slide_queries(queries: list[str], n_insights: int) -> list[str | None]:
 
 
 def _fetch_slide_backgrounds(queries: list[str], n_insights: int, force: bool) -> list[str | None]:
-    """Fetch one portrait Pexels photo per slide -> tmp/slide_bg_<n>.jpg.
+    """Fetch one portrait Pexels photo per slide -> tmp/slide_bg_<query-hash>.jpg.
 
+    Cached by query hash, not slide index, so a new episode's different
+    search_queries fetch fresh photos instead of reusing the prior deck.
     Degrades per slide: a query that yields nothing (or a Pexels outage) leaves
     that slide's entry None so it renders on the solid background instead.
     """
     os.makedirs(config.TMP_DIR, exist_ok=True)
     paths: list[str | None] = []
-    for i, query in enumerate(_slide_queries(queries, n_insights)):
-        cache = os.path.join(config.TMP_DIR, f"slide_bg_{i}.jpg")
+    for query in _slide_queries(queries, n_insights):
+        cache = os.path.join(config.TMP_DIR, f"slide_bg_{pexels_bg.query_slug(query)}.jpg")
         paths.append(pexels_bg.fetch_photo(query, cache, force=force) if query else None)
     return paths
 
