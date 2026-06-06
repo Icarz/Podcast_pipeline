@@ -55,12 +55,16 @@ MAX_CLIPS_PER_EPISODE = 5
 EXTRACT_MODEL = "claude-sonnet-4-6"
 EXTRACT_MAX_TOKENS = 2000
 # Target clip window the model should aim for, in seconds.
+# Capped at 58s so the finished Short stays UNDER 60s — YouTube blocks the
+# Pixabay music bed on Shorts that are 60s or longer, so we keep a 2s safety
+# margin under that threshold.
 CLIP_WINDOW_MIN_SECONDS = 45
-CLIP_WINDOW_MAX_SECONDS = 65
-# Hard upper bound: the model may run longer than the target ONLY to finish a
-# complete thought (completeness beats exact length). Snapping clip_end to a
-# segment boundary can also push past the target, so validation allows up to here.
-CLIP_WINDOW_MAX_HARD_SECONDS = 75
+CLIP_WINDOW_MAX_SECONDS = 58
+# Hard upper bound enforced by ai_extract._validate(). It must also sit at/below
+# 58s (not just the soft target) — validation checks against THIS value, and
+# sentence-boundary snapping can push the window a touch past the target, which
+# the 2s margin absorbs.
+CLIP_WINDOW_MAX_HARD_SECONDS = 58
 
 # --- Slide dimensions (pixels) ---
 # Vertical 9:16 for Reels/Shorts; switch to 1920x1080 for landscape YouTube.
@@ -97,7 +101,12 @@ BG_DARKEN = 0.35                     # brightness multiplier (0=black, 1=origina
 IMAGE_MODEL = "gemini-2.5-flash-image"
 IMAGE_PROMPT_COUNT = 4               # number of background prompts ai_extract emits
 SEARCH_QUERY_COUNT = 5               # one art-directed stock-photo query per carousel slide
-VIDEO_QUERY_COUNT = 4                # art-directed stock-VIDEO queries for the clip background
+VIDEO_QUERY_COUNT = 4                # stock-VIDEO background SLOTS to actually fill
+VIDEO_QUERY_SPARE = 1                # extra backup query ai_extract emits as a fallback
+# What ai_extract emits: the 4 primary beats PLUS spare backups (5 total). pexels_bg
+# fills VIDEO_QUERY_COUNT slots and dips into the spare(s) when a query yields a
+# duplicate/empty result, so all 4 slots still get DISTINCT footage.
+VIDEO_QUERY_EXTRACT_COUNT = VIDEO_QUERY_COUNT + VIDEO_QUERY_SPARE
 IMAGE_ASPECT_RATIO = "9:16"          # vertical, matches the video frame
 BG_IMAGE_PREFIX = "bg_"             # tmp/bg_<n>.png  /  tmp/bg_<n>.mp4
 
@@ -121,6 +130,11 @@ BG_KENBURNS_ZOOM_FROM = 1.08         # start scale; margin (1080*.08/2=43px) > p
 BG_KENBURNS_ZOOM_TO = 1.18           # end scale — slow zoom-in
 BG_KENBURNS_PAN = 40                 # max pan drift in pixels per axis
 BG_OVERLAY_OPACITY = 0.5             # 50% black overlay so captions stay readable
+# Hard cap on how long any single background clip may hold on screen. If too few
+# distinct clips arrive to tile the window under this cap, video_gen adds more
+# (shorter) slots and cycles the available clips with Ken Burns variations rather
+# than letting one shot stretch out and feel static.
+MAX_BG_CLIP_DURATION = 18            # seconds, per-slot ceiling
 
 # Burned word-level karaoke captions (lower band of the frame).
 CAPTION_FONT_SIZE = 80

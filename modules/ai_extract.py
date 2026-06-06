@@ -46,12 +46,14 @@ SYSTEM_PROMPT = (
     "PHOTO search query per carousel slide, IN THIS ORDER: [0] cover (matches the "
     "hook), [1] insight 1, [2] insight 2, [3] insight 3, [4] quote. Each 2-4 "
     "words. See the SEARCH_QUERIES art-direction rules below.\n"
-    '  "video_queries": array of exactly 4 OBJECTS — art-directed stock-VIDEO '
+    '  "video_queries": array of exactly 5 OBJECTS — art-directed stock-VIDEO '
     "beats for the moving background BEHIND the chosen clip (clip_start to "
-    "clip_end). These are SEPARATE from search_queries and tuned for motion "
-    'footage. Each object is {"keyword": <one concept word>, "query": <2-4 word '
-    "portrait stock-video search>}. See the VIDEO_QUERIES art-direction rules "
-    "below.\n\n"
+    "clip_end). The FIRST 4 are the primary beats; the 5th is a SPARE BACKUP "
+    "beat (same tone, a different scene) used only if one of the primary clips "
+    "can't be sourced. These are SEPARATE from search_queries and tuned for "
+    'motion footage. Each object is {"keyword": <one concept word>, "query": '
+    "<2-4 word portrait stock-video search>}. See the VIDEO_QUERIES "
+    "art-direction rules below.\n\n"
     "Style guidance for image_prompts: realistic lifestyle and cinematic "
     "environments — people in motion, cities at golden hour, gyms, workspaces "
     "with natural light, silhouettes, wide establishing shots. AVOID tight face "
@@ -85,8 +87,10 @@ SYSTEM_PROMPT = (
     '"Discipline beats motivation" -> solitary grit -> "runner dawn empty '
     'street".\n\n'
     "VIDEO_QUERIES — think like a FILM EDITOR choosing B-roll for the chosen "
-    "clip, NOT like a photo picker. Produce EXACTLY 4 beats that together form ONE "
-    "coherent moving backdrop behind the clip. For EACH beat, work in TWO steps:\n"
+    "clip, NOT like a photo picker. Produce EXACTLY 5 beats: 4 that together form "
+    "ONE coherent moving backdrop behind the clip, PLUS a 5th SPARE backup beat "
+    "(same palette/energy, yet a distinct scene from the other 4) kept in reserve "
+    "as a fallback. For EACH beat, work in TWO steps:\n"
     "  STEP 1 — KEYWORD: read the ACTUAL spoken words inside the clip window "
     "(clip_start..clip_end), split it into 4 emotional beats (opening, two middle "
     "beats, payoff), and for each beat name ONE core CONCEPT KEYWORD that captures "
@@ -105,16 +109,17 @@ SYSTEM_PROMPT = (
     "flyovers, and hands doing things (writing, brewing coffee, working). AVOID "
     "static concepts that only exist as still photos (logos, charts, posed "
     "headshots, a single object on a table). The captions already carry the "
-    "literal words, so match the overall MOOD, not the dictionary meaning. All 4 "
-    "KEYWORDS must be DISTINCT and all 4 QUERIES must be DISTINCT scenes, yet "
+    "literal words, so match the overall MOOD, not the dictionary meaning. All 5 "
+    "KEYWORDS must be DISTINCT and all 5 QUERIES must be DISTINCT scenes, yet "
     "TONALLY CONSISTENT with one another (same time of day / palette / energy) so "
     "they crossfade as one continuous piece — do NOT mix a bright beach with a "
     "dark city. Favor vertical-friendly compositions.\n"
-    "Example for a calm clip about inner peace: "
+    "Example for a calm clip about inner peace (4 primary + 1 spare): "
     '[{"keyword": "stillness", "query": "misty forest morning"}, '
     '{"keyword": "calm", "query": "slow river flowing"}, '
     '{"keyword": "clarity", "query": "fog drifting mountains"}, '
-    '{"keyword": "solitude", "query": "person walking trail"}].\n\n'
+    '{"keyword": "solitude", "query": "person walking trail"}, '
+    '{"keyword": "serenity", "query": "lone boat still lake"}].\n\n'
     "Clip length: aim for a window of "
     f"{config.CLIP_WINDOW_MIN_SECONDS}-{config.CLIP_WINDOW_MAX_SECONDS} seconds. "
     "You may run slightly longer, but (clip_end - clip_start) MUST NEVER exceed "
@@ -281,7 +286,7 @@ def _validate(data: dict) -> None:
     # model must never crash the pipeline: drop blanks/extras, and pad by cycling
     # the real queries if too few.
     _normalize_query_list(data, "search_queries", config.SEARCH_QUERY_COUNT)
-    _normalize_video_queries(data, config.VIDEO_QUERY_COUNT)
+    _normalize_video_queries(data, config.VIDEO_QUERY_EXTRACT_COUNT)
 
     window = data["clip_end"] - data["clip_start"]
     lo, hi = config.CLIP_WINDOW_MIN_SECONDS, config.CLIP_WINDOW_MAX_HARD_SECONDS
@@ -299,6 +304,48 @@ def _ends_sentence(word: str) -> bool:
     """True if a word token ends a sentence (terminal punctuation, ignoring
     any trailing quote/bracket characters)."""
     return word.rstrip("\"')]}").endswith(_SENTENCE_END)
+
+
+def _trim_to_cap(data: dict, words: list) -> None:
+    """Shorten an over-long clip to a sentence boundary within the hard cap.
+
+    The model sometimes insists on a single complete thought that runs a few
+    seconds past ``CLIP_WINDOW_MAX_HARD_SECONDS`` (it is deterministic, so simply
+    re-asking returns the same pick). Rather than reject it, pull ``clip_end``
+    back to the LATEST sentence-ending word that still fits under the cap — keeping
+    the clip >= the min window when possible so it ends on a complete sentence
+    instead of mid-thought. No-op when the clip already fits.
+    """
+    cs, ce = data.get("clip_start"), data.get("clip_end")
+    if not isinstance(cs, (int, float)) or not isinstance(ce, (int, float)):
+        return
+    cap = config.CLIP_WINDOW_MAX_HARD_SECONDS
+    if ce - cs <= cap:
+        return
+
+    ws = [
+        w for w in words
+        if w.get("start") is not None and w.get("end") is not None and (w.get("word") or "").strip()
+    ]
+    limit = cs + cap
+    floor = cs + config.CLIP_WINDOW_MIN_SECONDS
+    sentence_ends = [w["end"] for w in ws if _ends_sentence(w["word"]) and cs < w["end"] <= limit]
+    # Prefer a sentence end at/above the min window; else the latest that fits;
+    # else any word end under the cap; else a hard cut at the cap.
+    in_band = [t for t in sentence_ends if t >= floor]
+    if in_band:
+        new_end = max(in_band)
+    elif sentence_ends:
+        new_end = max(sentence_ends)
+    else:
+        word_ends = [w["end"] for w in ws if cs < w["end"] <= limit]
+        new_end = max(word_ends) if word_ends else limit
+
+    logger.warning(
+        "Clip window %.1fs exceeds cap %ds; trimming clip_end %.2f -> %.2f (now %.1fs)",
+        ce - cs, cap, ce, new_end, new_end - cs,
+    )
+    data["clip_end"] = new_end
 
 
 def _snap_to_sentences(data: dict, words: list) -> None:
@@ -393,13 +440,21 @@ def extract_highlights(transcript: dict) -> dict:
 
     raw = next((b.text for b in response.content if b.type == "text"), "")
     parsed = json.loads(_strip_to_json(raw))
+
+    # Trim an over-long pick to a sentence boundary within the cap BEFORE
+    # validation, so a deterministic too-long-by-a-few-seconds thought is
+    # shortened rather than rejected (re-asking returns the same pick).
+    words = transcript.get("words") if isinstance(transcript, dict) else None
+    if words:
+        _trim_to_cap(parsed, words)
     _validate(parsed)
 
     # Snap onto real sentence boundaries so the clip never cuts a word in half
-    # and never opens/ends mid-thought.
-    words = transcript.get("words") if isinstance(transcript, dict) else None
+    # and never opens/ends mid-thought, then re-cap (snapping clip_start earlier
+    # can nudge the window back over the limit).
     if words:
         _snap_to_sentences(parsed, words)
+        _trim_to_cap(parsed, words)
         window = parsed["clip_end"] - parsed["clip_start"]
         if window > config.CLIP_WINDOW_MAX_HARD_SECONDS:
             logger.warning(

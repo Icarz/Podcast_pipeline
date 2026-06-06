@@ -243,16 +243,50 @@ def fetch_photo(query: str, path: str, force: bool = False) -> str | None:
     return None
 
 
-def fetch_backgrounds(queries: list[str], out_dir: str = None, force: bool = False) -> list[str] | None:
-    """Download one stock video per query; return paths, or None if all fail.
+def _acquire_for_query(
+    query: str, out_dir: str, force: bool, used_ids: set
+) -> tuple[str, int] | None:
+    """Get ONE usable, not-yet-used clip for ``query`` (cache or fresh download).
 
-    Files go to ``out_dir/bg_<query-hash>.mp4`` — keyed by the query string, not
-    the slot index, so a new episode with different ``video_queries`` never
-    reuses the previous episode's footage, while re-rendering the same episode
-    (identical queries) still hits cache. Existing files are reused unless
-    ``force`` is True. Queries that yield nothing are skipped; if *every* query
-    fails (and nothing was cached), returns None so the caller can fall back to
-    image/gradient backgrounds.
+    Returns ``(path, video_id)`` whose id is guaranteed not in ``used_ids``, or
+    ``None`` if this query can't yield a fresh distinct clip. Does NOT mutate
+    ``used_ids`` — the caller records the id once it commits the slot.
+    """
+    slug = query_slug(query)
+
+    # Cache HIT only counts if its id hasn't already been taken by an earlier
+    # slot. A collision falls through to a fresh fetch that _find_video forces to
+    # a different, unused id.
+    cached = None if force else _cached_for_slug(out_dir, slug)
+    if cached and cached[1] is not None and cached[1] not in used_ids:
+        cpath, cvid = cached
+        logger.info("Pexels background cached: %s (video %s)", os.path.basename(cpath), cvid)
+        return cpath, cvid
+
+    url, vid = _find_video(query, used_ids)
+    if url and vid is not None:
+        path = os.path.join(out_dir, f"{config.BG_IMAGE_PREFIX}{slug}_{vid}.mp4")
+        if _download(url, path):
+            logger.info("Downloaded Pexels background: %s (video %s)", os.path.basename(path), vid)
+            return path, vid
+    return None
+
+
+def fetch_backgrounds(queries: list[str], out_dir: str = None, force: bool = False) -> list[str] | None:
+    """Fill ``VIDEO_QUERY_COUNT`` background slots with DISTINCT stock clips.
+
+    ``queries`` is the ai_extract ``video_queries`` list: the first
+    ``VIDEO_QUERY_COUNT`` are primary beats (one per slot), any extras are SPARE
+    backups. For each slot we try its primary query; if that yields a duplicate
+    or empty result (``_find_video`` already walks down the result list skipping
+    ids used by earlier slots), we fall through to the spare query/queries so the
+    slot still gets fresh, distinct footage instead of being dropped.
+
+    Files go to ``out_dir/bg_<query-hash>_<video-id>.mp4`` — keyed by the query
+    string (fresh episode -> fresh footage) with the Pexels id embedded so a
+    cache hit still registers its id into the run's used-id set. Returns the list
+    of slot paths, or ``None`` if Pexels yields nothing at all (caller then falls
+    back to image/gradient backgrounds).
     """
     if not _api_key():
         logger.info("PEXELS_API_KEY not set; skipping Pexels backgrounds")
@@ -261,43 +295,45 @@ def fetch_backgrounds(queries: list[str], out_dir: str = None, force: bool = Fal
     out_dir = out_dir or config.TMP_DIR
     os.makedirs(out_dir, exist_ok=True)
 
-    paths: list[str] = []
-    chosen_ids: list[int | None] = []  # final id per slot, for the distinctness log
-    used_ids: set = set()  # Pexels video ids already taken this run -> no repeats.
-    for query in queries:
-        slug = query_slug(query)
+    n_slots = min(config.VIDEO_QUERY_COUNT, len(queries))
+    primary = queries[:n_slots]
+    spares = queries[n_slots:]  # the 5th+ backup queries
 
-        # Cache HIT: reuse only if its id hasn't already been taken by an earlier
-        # slot. A collision (same id cached for two queries) falls through to a
-        # fresh fetch that _find_video forces to a different, unused id.
-        cached = None if force else _cached_for_slug(out_dir, slug)
-        if cached and cached[1] not in used_ids:
-            cpath, cvid = cached
-            logger.info("Pexels background cached, skipping: %s (video %s)", os.path.basename(cpath), cvid)
-            if cvid is not None:
-                used_ids.add(cvid)
-            paths.append(cpath)
-            chosen_ids.append(cvid)
+    paths: list[str] = []
+    chosen_ids: list[int] = []   # final id per filled slot, for the distinctness log
+    used_ids: set = set()        # Pexels video ids already taken this run -> no repeats.
+    spare_triggered = False
+
+    for slot_i, query in enumerate(primary):
+        got = _acquire_for_query(query, out_dir, force, used_ids)
+
+        # Primary query gave nothing fresh -> dip into the spare pool.
+        if got is None:
+            for spare in spares:
+                got = _acquire_for_query(spare, out_dir, force, used_ids)
+                if got is not None:
+                    spare_triggered = True
+                    logger.info("Slot %d fell back to spare query %r", slot_i + 1, spare)
+                    break
+
+        if got is None:
+            logger.warning("Slot %d unfilled: no fresh clip from primary or spare queries", slot_i + 1)
             continue
 
-        url, vid = _find_video(query, used_ids)
-        if url:
-            path = os.path.join(out_dir, f"{config.BG_IMAGE_PREFIX}{slug}_{vid}.mp4")
-            if _download(url, path):
-                used_ids.add(vid)
-                logger.info("Downloaded Pexels background: %s (video %s)", os.path.basename(path), vid)
-                paths.append(path)
-                chosen_ids.append(vid)
+        path, vid = got
+        used_ids.add(vid)
+        paths.append(path)
+        chosen_ids.append(vid)
 
     if not paths:
         logger.warning("Pexels returned no usable backgrounds")
         return None
 
-    # Confirm every slot got a distinct Pexels video id (no clip repeats).
+    # Confirm every filled slot got a distinct Pexels video id (no clip repeats).
     distinct = len(set(chosen_ids)) == len(chosen_ids)
     logger.info(
-        "Final background video ids: %s (%d slots, distinct=%s)",
-        chosen_ids, len(chosen_ids), distinct,
+        "Final background video ids: %s (%d/%d slots filled, distinct=%s, spare_used=%s)",
+        chosen_ids, len(chosen_ids), config.VIDEO_QUERY_COUNT, distinct, spare_triggered,
     )
     if not distinct:
         logger.warning("Duplicate background video id across slots: %s", chosen_ids)

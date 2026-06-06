@@ -10,6 +10,7 @@ podcast clip channels:
 
 import glob
 import logging
+import math
 import os
 import re
 
@@ -153,27 +154,67 @@ def _image_background_layers(window: float, image_paths: list[str]) -> list:
     return layers
 
 
+def _slot_assignment(window: float, n_clips: int) -> tuple[int, list[int]]:
+    """Decide how many slots to tile ``window`` with and which clip fills each.
+
+    No single slot may exceed ``config.MAX_BG_CLIP_DURATION`` — so when too few
+    distinct clips arrive to cover the window under that cap, we add MORE (and
+    therefore SHORTER) slots and cycle the available clips across them. Modulo
+    cycling never places the same clip in adjacent slots (for ``n_clips`` >= 2),
+    so even a degenerate 3-clips-for-4-slots case shows variety instead of one
+    shot stretching past the cap.
+
+    Returns ``(n_slots, [clip_index_per_slot])``.
+    """
+    cap = config.MAX_BG_CLIP_DURATION
+    # Minimum slots so window / n_slots <= cap.
+    min_slots = max(1, math.ceil(window / cap)) if cap else 1
+    n_slots = max(n_clips, min_slots)
+    assignment = [i % n_clips for i in range(n_slots)]
+    return n_slots, assignment
+
+
 def _video_background_layers(window: float, video_paths: list[str]) -> list:
     """Stock video clips fitted to their slot, cover-cropped, crossfaded.
 
-    A slot is ``seg`` long. We NEVER loop a clip (a short clip looped to fill its
-    slot shows the same footage twice). Instead:
+    A slot is ``seg`` long and capped at ``config.MAX_BG_CLIP_DURATION``. We NEVER
+    loop a clip (a short clip looped to fill its slot shows the same footage
+    twice). Per slot:
       * clip natural duration >= seg  -> trim to seg (its own motion is enough);
       * clip shorter than seg         -> slow it to exactly fill seg (motion
-        plays through once, no loop) and add a slow Ken Burns zoom/pan so the
-        extended slot still feels alive.
+        plays through once, no loop) and add a slow Ken Burns zoom/pan.
+    When there are fewer distinct clips than slots (e.g. only 3 clips arrived for
+    a window that needs 4 slots under the cap), clips are cycled across slots and
+    every reused occurrence gets a different trim offset + Ken Burns motion so the
+    two appearances don't look identical.
     """
     w, h = config.SLIDE_WIDTH, config.SLIDE_HEIGHT
-    n = len(video_paths)
-    seg, xfade = _slot_layout(window, n)
+    n_clips = len(video_paths)
+    n_slots, assignment = _slot_assignment(window, n_clips)
+    seg, xfade = _slot_layout(window, n_slots)
+    if n_slots > n_clips:
+        logger.info(
+            "Only %d distinct clip(s) for a %.1fs window; using %d slots of %.1fs "
+            "(<= %ds cap) and cycling clips with Ken Burns variations",
+            n_clips, window, n_slots, seg, config.MAX_BG_CLIP_DURATION,
+        )
 
+    occurrences: dict[int, int] = {}  # clip_index -> times used so far
     layers: list = []
-    for i, path in enumerate(video_paths):
-        clip = VideoFileClip(path).without_audio()
+    for i in range(n_slots):
+        ci = assignment[i]
+        occ = occurrences.get(ci, 0)
+        occurrences[ci] = occ + 1
+        is_repeat = occ > 0
+
+        clip = VideoFileClip(video_paths[ci]).without_audio()
         natural = clip.duration
 
         if natural >= seg:
-            clip = clip.subclipped(0, seg)  # trim long, no loop
+            # Trim; for a reused clip, start at a later offset so the second
+            # appearance shows different footage (bounded to stay in-bounds).
+            start = min(occ * seg, max(0.0, natural - seg))
+            clip = clip.subclipped(start, start + seg)
             extended = False
         else:
             # Extend WITHOUT looping: slow the footage so it lasts exactly seg.
@@ -184,23 +225,31 @@ def _video_background_layers(window: float, video_paths: list[str]) -> list:
         clip = clip.resized(scale)
         clip = clip.cropped(width=w, height=h, x_center=clip.w / 2, y_center=clip.h / 2)
 
-        if extended:
+        # Ken Burns on extended clips (fills time) and on every repeat (so the two
+        # appearances of one clip read as distinct shots).
+        if extended or is_repeat:
             sign = 1 if i % 2 == 0 else -1  # alternate pan direction for variety
             pan = config.BG_KENBURNS_PAN * sign
             clip = _ken_burns_motion(clip, seg, pan, pan)
+            why = "slowed" if extended else "trimmed"
             logger.info(
-                "BG slot %d: %.1fs clip < %.1fs slot -> slowed + Ken Burns (no loop)",
-                i + 1, natural, seg,
+                "BG slot %d: clip #%d (%.1fs, occ %d) -> %s + Ken Burns, %.1fs slot",
+                i + 1, ci + 1, natural, occ + 1, why, seg,
             )
         else:
             clip = clip.with_duration(seg)
-            logger.info("BG slot %d: %.1fs clip >= %.1fs slot -> trimmed", i + 1, natural, seg)
+            logger.info(
+                "BG slot %d: clip #%d (%.1fs) >= %.1fs slot -> trimmed", i + 1, ci + 1, natural, seg
+            )
 
         clip = clip.with_start(i * (seg - xfade))
         if i > 0:
             clip = clip.with_effects([vfx.CrossFadeIn(xfade)])
         layers.append(clip)
-    logger.info("Built %d-video background (%.1fs each, %.1fs crossfade)", n, seg, xfade)
+    logger.info(
+        "Built %d-slot video background from %d clip(s) (%.1fs each, %.1fs crossfade, cap %ds)",
+        n_slots, n_clips, seg, xfade, config.MAX_BG_CLIP_DURATION,
+    )
     return layers
 
 
