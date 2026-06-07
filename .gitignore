@@ -11,17 +11,25 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# Pipeline artifacts
+# Pipeline artifacts — ignore everything under output/, tmp/, logs/, INCLUDING
+# stray files dropped directly in output/ (e.g. debug frame_*.png dumps).
+output/*
+!output/videos/
+!output/slides/
 output/videos/*
 output/slides/*
 tmp/*
 logs/*
 
-# Keep folder structure
+# Keep folder structure (empty-dir placeholders stay versioned)
 !output/videos/.gitkeep
 !output/slides/.gitkeep
 !tmp/.gitkeep
 !logs/.gitkeep
+
+# Crash dumps / throwaway scratch drivers
+*.stackdump
+tmp_*.py
 
 # OS / editor
 .DS_Store
