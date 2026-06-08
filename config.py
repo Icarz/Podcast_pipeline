@@ -29,6 +29,18 @@ PODCAST_FEEDS = {
     "daily_stoic":    "https://rss.art19.com/the-daily-stoic",
     # The Mindset Mentor — Rob Dial (Simplecast)     https://feeds.simplecast.com/rpKQEwel
     "mindset_mentor": "https://feeds.simplecast.com/rpKQEwel",
+    # The Jordan B. Peterson Podcast (Megaphone)     https://feeds.megaphone.fm/BVDWV6444647327
+    # NOTE: canonical PUBLIC feed (per Apple + jordanbpeterson.com + podnews).
+    # Recent episodes are Daily Wire+ members-only; public RSS lags (newest
+    # public ep was Nov 2025 as of June 2026). --auto dedup handles re-pulls.
+    "jordan_peterson": "https://feeds.megaphone.fm/BVDWV6444647327",
+    # Jocko Podcast — Jocko Willink (RedCircle)      https://feeds.redcircle.com/64a89f88-a245-4098-8d8d-496325ec4f74
+    # Active, ~2x/week (main + Jocko Underground). Verified live June 2026.
+    "jocko_podcast":  "https://feeds.redcircle.com/64a89f88-a245-4098-8d8d-496325ec4f74",
+    # Not in the rotation; kept for manual runs.     https://feeds.megaphone.fm/ISML9402684841
+    # SOLVED with Mark Manson (monthly, drops the 1st). "The Mark Manson Show"
+    # is not a current show; SOLVED is Manson's active podcast. Verified June 2026.
+    "mark_manson":    "https://feeds.megaphone.fm/ISML9402684841",
     # Not in the rotation; kept for manual runs.     https://feeds.simplecast.com/UCwaTX1J
     "mel_robbins":    "https://feeds.simplecast.com/UCwaTX1J",
 }
@@ -41,10 +53,12 @@ DEFAULT_FEED = "mindset_mentor"
 # date.weekday() is Mon=0, Tue=1, ..., Sun=6. Any weekday NOT listed is a
 # non-posting day: --auto logs "no posting day today" and exits 0.
 ROTATION = {
-    0: "modern_wisdom",   # Monday
-    2: "huberman_lab",    # Wednesday
-    4: "daily_stoic",     # Friday
-    5: "mindset_mentor",  # Saturday
+    0: "modern_wisdom",    # Monday
+    1: "jordan_peterson",  # Tuesday
+    2: "huberman_lab",     # Wednesday
+    3: "jocko_podcast",    # Thursday
+    4: "daily_stoic",      # Friday
+    5: "mindset_mentor",   # Saturday
 }
 
 # Posted-history log: which episodes have already been uploaded (keyed by RSS
@@ -81,7 +95,7 @@ EXTRACT_MAX_TOKENS = 2000
 # Capped at 58s so the finished Short stays UNDER 60s — YouTube blocks the
 # Pixabay music bed on Shorts that are 60s or longer, so we keep a 2s safety
 # margin under that threshold.
-CLIP_WINDOW_MIN_SECONDS = 45
+CLIP_WINDOW_MIN_SECONDS = 25
 CLIP_WINDOW_MAX_SECONDS = 58
 # Hard upper bound enforced by ai_extract._validate(). It must also sit at/below
 # 58s (not just the soft target) — validation checks against THIS value, and

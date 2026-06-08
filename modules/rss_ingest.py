@@ -4,10 +4,12 @@ Parses a podcast RSS feed with browser-like headers, pulls the latest
 episode's audio URL from its enclosures, and downloads the MP3 with yt-dlp.
 """
 
+import hashlib
 import logging
 import os
 import re
 import unicodedata
+from urllib.parse import unquote, urlparse
 
 import feedparser
 import yt_dlp
@@ -135,6 +137,41 @@ def download_latest(feed, entry) -> dict:
     meta = _entry_metadata(entry)
     meta["audio_path"] = audio_path
     return meta
+
+
+def fetch_from_url(url: str, title: str | None = None) -> dict:
+    """Download a DIRECT episode-audio URL, bypassing RSS entirely.
+
+    Mirrors the yt-dlp download path used for feed episodes (:func:`_download_audio`)
+    but takes a raw audio URL instead of a feed. Returns the same minimal episode
+    dict shape the pipeline consumes downstream (``transcribe`` onward):
+
+      * ``title``      — ``title`` when given, else derived from the URL filename.
+      * ``guid``       — sha1 of the URL, so posted-history dedup still works on a
+                         repeat run of the same direct URL.
+      * ``audio_path`` — the downloaded local file.
+      * ``feed``       — the literal ``"manual"`` (not a configured feed).
+      * ``description`` / ``link`` — ``None`` / the source URL.
+    """
+    # Derive a title from the URL filename when none was supplied.
+    if not title:
+        filename = unquote(os.path.basename(urlparse(url).path))
+        title = os.path.splitext(filename)[0] or "manual_episode"
+
+    guid = hashlib.sha1(url.encode("utf-8")).hexdigest()
+    basename = f"manual_{_sanitize(title, max_len=config.EPISODE_TITLE_MAX_LEN)}"
+
+    logger.info("Downloading direct audio (no RSS): %s -> tmp/%s", url, basename)
+    audio_path = _download_audio(url, basename)
+
+    return {
+        "title": title,
+        "guid": guid,
+        "audio_path": audio_path,
+        "description": None,
+        "link": url,
+        "feed": "manual",
+    }
 
 
 def peek_latest(feed_url: str) -> dict:

@@ -14,6 +14,7 @@ flow is a NotImplementedError scaffold) — we only log the file paths/URLs.
 Run:
     .\\venv\\Scripts\\python.exe main.py mindset_mentor   # feed key
     .\\venv\\Scripts\\python.exe main.py https://...rss    # or a raw RSS URL
+    .\\venv\\Scripts\\python.exe main.py --url https://...mp3 --title "..."  # direct audio, no RSS
 
 Re-runs reuse the tmp/<basename>.plan.json cache that this module (and the
 video_gen harness) writes, so Groq/Claude are only hit once per episode.
@@ -74,13 +75,12 @@ logger = logging.getLogger("pipeline")
 def _display_name(feed_arg: str) -> str:
     """The brand name for the watermark.
 
-    Known feed keys use the single-source brand (``config.BRAND_NAME``); a raw
-    URL yields an empty name (build_video then skips the watermark) since those
-    one-off runs aren't branded.
+    ALWAYS the single-source brand (``config.BRAND_NAME``) — every video the
+    pipeline publishes must carry the Icarus Wings watermark, regardless of
+    source. This holds for configured feed keys, raw RSS URLs, and direct
+    ``--url`` ("manual") runs alike.
     """
-    if feed_arg in config.PODCAST_FEEDS:
-        return config.BRAND_NAME
-    return ""
+    return config.BRAND_NAME
 
 
 def _plan_cache_path(audio_path: str) -> str:
@@ -402,6 +402,22 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--url",
+        help=(
+            "Direct episode-audio URL. Bypasses RSS ingestion entirely: downloads "
+            "the audio (yt-dlp) and runs the pipeline from transcribe onward, "
+            "tagged as the 'manual' feed. Mutually exclusive with --auto and the "
+            "positional feed."
+        ),
+    )
+    parser.add_argument(
+        "--title",
+        help=(
+            "Episode title to use with --url. When omitted, the title is derived "
+            "from the URL's filename. Only meaningful alongside --url."
+        ),
+    )
+    parser.add_argument(
         "--privacy",
         choices=["private", "unlisted", "public"],
         default="private",
@@ -409,12 +425,23 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    if args.url and args.auto:
+        parser.error("--url cannot be combined with --auto")
+    if args.title and not args.url:
+        parser.error("--title is only valid together with --url")
+
     try:
         if args.auto:
             result = run_auto(privacy_status=args.privacy)
             if result is None:
                 # Nothing to do (no posting day / already posted / feed down).
                 sys.exit(0)
+        elif args.url:
+            # Direct-URL mode: skip rss_ingest, download the audio, then run the
+            # normal pipeline from transcribe onward as the "manual" feed.
+            logger.info("Direct URL mode: %s", args.url)
+            episode = rss_ingest.fetch_from_url(args.url, title=args.title)
+            result = run("manual", episode=episode, privacy_status=args.privacy)
         else:
             result = run(args.feed, privacy_status=args.privacy)
     except Exception:

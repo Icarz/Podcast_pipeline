@@ -2,7 +2,7 @@
 .SYNOPSIS
     Create / delete / show the "Icarus Wings Pipeline" Windows scheduled task.
 
-    Runs  main.py --auto  daily at 7:00 PM local time. main.py decides by weekday
+    Runs  main.py --auto  daily at 6:00 PM local time. main.py decides by weekday
     whether to post, skip (already posted), or no-op (non-rotation day), so a
     single daily trigger is all that's needed.
 
@@ -29,11 +29,11 @@ $TaskName   = 'Icarus Wings Pipeline'
 $ProjectDir = $PSScriptRoot                                   # = project root (this file's folder)
 $Python     = Join-Path $ProjectDir 'venv\Scripts\python.exe'
 $Arguments  = 'main.py --auto'
-$RunHour    = 19                                              # 7:00 PM, local time
+$RunHour    = 18                                              # 6:00 PM, local time
 
 
 function New-TaskXml {
-    # Anchor the daily schedule to the next upcoming 19:00 local time.
+    # Anchor the daily schedule to the next upcoming 18:00 local time.
     $start = Get-Date -Hour $RunHour -Minute 0 -Second 0
     if ($start -lt (Get-Date)) { $start = $start.AddDays(1) }
     $startBoundary = $start.ToString('yyyy-MM-ddTHH:mm:ss')
@@ -42,7 +42,7 @@ function New-TaskXml {
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Icarus Wings podcast pipeline - daily 7PM rotation trigger for "main.py --auto". The script itself decides post/skip/no-op by weekday.</Description>
+    <Description>Icarus Wings podcast pipeline - daily 6PM rotation trigger for "main.py --auto". The script itself decides post/skip/no-op by weekday.</Description>
   </RegistrationInfo>
   <Triggers>
     <CalendarTrigger>

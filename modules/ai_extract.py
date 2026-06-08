@@ -23,10 +23,32 @@ SYSTEM_PROMPT = (
     "select the single best short-form clip plus social copy.\n\n"
     "You MUST respond with ONLY a single valid JSON object and nothing else — "
     "no markdown, no code fences, no commentary before or after.\n\n"
+    "CLIP SELECTION RULES:\n"
+    "1. Pick a clip containing a UNIVERSAL INSIGHT or PRINCIPLE — "
+    "something true for any listener regardless of who is speaking.\n"
+    "2. REJECT clips that are primarily: personal career stories, "
+    "event-specific narratives (sold out a venue, got signed, met "
+    "someone), name-dropping, or entertainment anecdotes.\n"
+    "3. BRAND CHECK: the clip MUST relate to at least one of: "
+    "discipline, focus, mindset, stoicism, neuroscience, habit "
+    "formation, emotional regulation, identity, resilience, or "
+    "self-belief as a universal principle. If the best clip fails "
+    "this check, pick the next best clip that passes it.\n\n"
     "The JSON object must have exactly these keys:\n"
     '  "hook"        : string — a scroll-stopping one-line hook for the clip.\n'
     '  "insights"    : array of exactly 3 strings — the key takeaways.\n'
-    '  "best_quote"  : string — the most quotable verbatim line from the transcript.\n'
+    '  "best_quote"  : string — the single most quotable verbatim line from the '
+    "speaker. It MUST pass ALL of these tests:\n"
+    "      1. Works as a standalone screenshot — someone seeing it with zero "
+    "context still gets the full punch.\n"
+    "      2. Has gravity or precision — not casual filler (\"dude\", \"like\", "
+    "\"you know\"), not a half-thought that needs the surrounding conversation "
+    "to land.\n"
+    "      3. Under 25 words — tighter is stronger.\n"
+    "      4. Sounds like something worth writing on a wall, not something you'd "
+    "say in a text.\n"
+    "      If the best candidate fails these tests, pick the second-best. Do NOT "
+    "include a quote just because it's the loudest or most energetic moment.\n"
     '  "title"       : string — a punchy video title (<= 80 chars).\n'
     '  "clip_start"  : number — MUST be the exact start timestamp of one of the '
     "segments in the provided list, AND must fall at the BEGINNING of a complete "
@@ -60,32 +82,23 @@ SYSTEM_PROMPT = (
     "close-ups. Each prompt must be vivid, specific, and self-contained "
     "(describe the scene, lighting, mood, and framing), suitable as a darkened "
     "background behind bold captions in a vertical 9:16 video.\n\n"
-    "SEARCH_QUERIES — think like an ART DIRECTOR choosing the single best photo "
-    "for each slide, NOT random mood shots. Produce EXACTLY 5 queries, one per "
-    "slide, in slide order (cover, insight 1, insight 2, insight 3, quote). For "
-    "EACH slide: (1) FIRST identify the CORE CONCEPT or EMOTION of that specific "
-    'line (e.g. "isolation", "focus", "overstimulation", "looking forward", '
-    '"inner peace", "discipline"). (2) THEN translate it into a CONCRETE, '
-    "FILMABLE scene a stock photographer actually shot — a real person, place, or "
-    "object DOING something, not an abstract idea (stock libraries have photos of "
-    "THINGS and PEOPLE doing THINGS, not concepts). (3) Each query = 2-4 words, "
-    "visual and specific.\n"
-    "Rules: prefer human moments and cinematic environments, e.g. "
-    '"man walking alone fog", "woman meditating window light", "empty road '
-    'sunrise", "person silhouette mountain", "hands holding coffee morning". '
-    "Match the EMOTIONAL TONE: calm ideas -> soft/natural light, serene settings; "
-    "hard/discipline ideas -> moody, high-contrast, urban; overstimulation -> "
-    "crowds, screens, city chaos. Avoid literal-but-ugly matches (do NOT search "
-    '"human brain" for a line about brains — search the FEELING, like "person '
-    'overwhelmed city crowd"). All 5 MUST be DISTINCT scenes, never two similar '
-    "queries. Favor portrait-friendly vertical compositions (a standing figure, a "
-    "path, a doorway, a tall window).\n"
-    "Examples of the thinking: "
-    '"Human brains were not built for this level of stimulation" -> '
-    'overstimulation -> "person overwhelmed phone crowd"; "Being peaceful becomes '
-    'your superpower" -> calm amid chaos -> "calm person quiet nature"; '
-    '"Discipline beats motivation" -> solitary grit -> "runner dawn empty '
-    'street".\n\n'
+    "SEARCH_QUERIES — exactly 5 Pexels PHOTO search queries, one per slide IN "
+    "ORDER:\n"
+    "  [0] cover — visual that matches the hook's energy and stakes.\n"
+    "  [1] insight 1 — matches the specific EMOTIONAL STATE of that insight, NOT "
+    "its topic. Ask: what would a person FEEL in this moment? Find a scene where a "
+    "real human is in that state.\n"
+    "  [2] insight 2 — same rule: emotion first, then scene.\n"
+    "  [3] insight 3 — same rule.\n"
+    "  [4] quote — evokes the tone and stakes of the quote itself.\n"
+    "Rules for every query:\n"
+    "  - Describe a REAL SCENE a stock photographer actually shot (person walking "
+    "foggy path, man looking at city from rooftop, runner at dawn, hands writing "
+    "in notebook — specific and physical).\n"
+    "  - Do NOT use abstract concepts as queries (no \"success\", \"ambition\", "
+    "\"clarity\", \"mindset\" — these return generic stock photos).\n"
+    "  - 2-4 words max, portrait-friendly composition preferred.\n"
+    "  - All 5 visually distinct — no two should return the same type of scene.\n\n"
     "VIDEO_QUERIES — think like a FILM EDITOR choosing B-roll for the chosen "
     "clip, NOT like a photo picker. Produce EXACTLY 5 beats: 4 that together form "
     "ONE coherent moving backdrop behind the clip, PLUS a 5th SPARE backup beat "
@@ -114,6 +127,19 @@ SYSTEM_PROMPT = (
     "TONALLY CONSISTENT with one another (same time of day / palette / energy) so "
     "they crossfade as one continuous piece — do NOT mix a bright beach with a "
     "dark city. Favor vertical-friendly compositions.\n"
+    "VIDEO QUERY RULES:\n"
+    "1. NEVER use literal nouns or proper nouns from the clip content.\n"
+    "   - content mentions stadium -> query 'person alone vast empty space'\n"
+    "   - content mentions city -> query 'lone figure urban dawn'\n"
+    "   - content mentions success -> query 'person confident morning light'\n"
+    "   - content mentions fear -> query 'person sitting alone in silence'\n"
+    "2. Each query must describe a CINEMATIC SCENE a stock photographer "
+    "would shoot — not a concept, not an event, not a place name.\n"
+    "3. The scene must feel like ELEVATION — upward motion, expansive "
+    "space, solitary focus, dawn light, quiet determination. Never "
+    "crowds, chaos, sports events, or celebrations.\n"
+    "4. Format: {\"keyword\": \"one emotion word\", \"query\": "
+    "\"filmable scene description\"}\n"
     "Example for a calm clip about inner peace (4 primary + 1 spare): "
     '[{"keyword": "stillness", "query": "misty forest morning"}, '
     '{"keyword": "calm", "query": "slow river flowing"}, '
