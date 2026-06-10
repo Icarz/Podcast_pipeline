@@ -499,7 +499,20 @@ def _snap_to_sentences(data: dict, words: list) -> None:
 
     cs, ce = data["clip_start"], data["clip_end"]
     new_start = min(start_times, key=lambda t: abs(t - cs))
-    new_end = min(end_times, key=lambda t: abs(t - ce))
+    # clip_end snaps BACKWARD only: take the LATEST sentence-ending word at or
+    # before ce (+0.30s grace), so the clip ends on the last complete sentence and
+    # never extends forward into the next one (a forward snap was producing the
+    # "...freedom. It's—" mid-sentence cut). Fall back to nearest-boundary only
+    # when no sentence ends at/before ce + 0.30s.
+    back_ends = [t for t in end_times if t <= ce + 0.30]
+    if back_ends:
+        new_end = max(back_ends)
+        if new_end != ce:
+            logger.info(
+                "Snapped clip_end back to last sentence boundary: %.2f -> %.2f", ce, new_end
+            )
+    else:
+        new_end = min(end_times, key=lambda t: abs(t - ce))
 
     # Guard against a degenerate snap (end at/before start): fall back to raw end.
     if new_end <= new_start:
@@ -589,6 +602,31 @@ def extract_highlights(transcript: dict) -> dict:
 
     logger.info("Extracted clip: %.1f-%.1fs | title=%r", parsed["clip_start"], parsed["clip_end"], parsed["title"])
     return parsed
+
+
+def extract_highlights_with_retry(transcript: dict, attempts: int = 3) -> dict:
+    """Call :func:`extract_highlights` up to ``attempts`` times, tolerating the
+    model's non-deterministic output.
+
+    Extraction is NOT deterministic: the same transcript can yield an off-by-one
+    count (e.g. 5 ``image_prompts`` instead of 4) or stray trailing data that trips
+    ``_validate``/``json.loads`` (both raise ``ValueError``). Rather than die on the
+    first throw, retry a few times — a later attempt almost always passes. Only
+    ``ValueError`` is caught (schema/parse variance); transport/API errors propagate
+    immediately. Re-raises the last ``ValueError`` after the final attempt fails.
+    """
+    last_exc: ValueError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return extract_highlights(transcript)
+        except ValueError as exc:
+            last_exc = exc
+            logger.warning(
+                "extract_highlights attempt %d/%d failed (non-deterministic): %s",
+                attempt, attempts, exc,
+            )
+    assert last_exc is not None
+    raise last_exc
 
 
 if __name__ == "__main__":

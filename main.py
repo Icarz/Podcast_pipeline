@@ -110,14 +110,14 @@ def _load_or_build_plan(audio_path: str) -> tuple[dict, dict]:
         # schema field we now require.
         if "search_queries" not in highlights:
             logger.info("Cached plan missing search_queries; re-running extraction (no Groq)")
-            highlights = ai_extract.extract_highlights(transcript)
+            highlights = ai_extract.extract_highlights_with_retry(transcript)
             _write_plan(cache_path, transcript, highlights)
         return transcript, highlights
 
     logger.info("[2/6] Transcribe (Groq Whisper): %s", os.path.basename(audio_path))
     transcript = transcribe.transcribe(audio_path)
     logger.info("[3/6] Extract clip plan (Claude %s)", config.EXTRACT_MODEL)
-    highlights = ai_extract.extract_highlights(transcript)
+    highlights = ai_extract.extract_highlights_with_retry(transcript)
     _write_plan(cache_path, transcript, highlights)
     logger.info("Cached transcript + plan: %s", os.path.basename(cache_path))
     return transcript, highlights

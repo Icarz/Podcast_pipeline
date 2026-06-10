@@ -28,6 +28,7 @@ from moviepy import (
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 import config
+from modules.ai_extract import _ends_sentence
 
 logger = logging.getLogger(__name__)
 
@@ -89,28 +90,49 @@ def _cover_image(im: Image.Image, w: int, h: int) -> Image.Image:
 
 
 def _ken_burns_motion(clip, duration: float, pan_x: float, pan_y: float):
-    """Apply a slow zoom + pan ("Ken Burns") to any frame-sized (w x h) clip.
+    """Apply a slow pan ("Ken Burns" drift) to any frame-sized (w x h) clip.
 
-    Works for both still images and (cover-fit) video clips: the scale stays > 1
-    throughout so the panned/zoomed frame always overfills and never reveals an
-    edge. Returns the clip with the time-varying resize/position applied.
+    Coverage is the hard requirement: the 1080x1920 canvas must be fully filled at
+    EVERY t, no black edge ever. We deliberately do NOT use a time-varying
+    ``.resized()`` here. Empirically, MoviePy v2 does not composite a clip that has
+    BOTH a time-varying resize AND a time-varying position the way the centering
+    math predicts — it left a ~20px bare edge on the panned slot even though the
+    geometry said it over-covered by 60px (verified at the pixel level). Instead we:
+
+      1. Resize ONCE by a CONSTANT factor ``S`` to a fixed, known oversized frame
+         (so CompositeVideoClip blits a predictably-sized layer), and
+      2. Pan it with a time-varying ``with_position`` that is CLAMPED so the frame
+         edges can never pull inside the canvas.
+
+    ``S`` is floored to cover the pan drift on each side plus a generous buffer
+    (a pan of P px needs S >= 1 + 2P/min(w,h) just to break even; we add ~0.06 so a
+    blit rounding of tens of px still can't open a gap). The slow zoom RAMP is
+    dropped in favour of this fixed over-scale — the gentle drift reads as Ken
+    Burns and, unlike the ramp, is bar-proof.
     """
     w, h = config.SLIDE_WIDTH, config.SLIDE_HEIGHT
     z0, z1 = config.BG_KENBURNS_ZOOM_FROM, config.BG_KENBURNS_ZOOM_TO
 
-    def scale(t: float) -> float:
-        p = (t / duration) if duration else 0.0
-        return z0 + (z1 - z0) * p
+    # Constant over-scale: at least the configured zoom, and at least the coverage
+    # floor (pan drift on both sides + a fat buffer for blit round-off).
+    s_min = 1.0 + (2.0 * max(abs(pan_x), abs(pan_y)) / min(w, h)) + 0.06
+    s = max(z0, z1, s_min)
+
+    clip = clip.with_duration(duration).resized(s)
+    fw, fh = clip.w, clip.h            # exact oversized frame size after resize
 
     def pos(t: float):
         p = (t / duration) if duration else 0.0
-        s = scale(t)
-        # Center the (scaled) frame, then drift it across by +/- the pan amount.
-        x = (w - w * s) / 2 + pan_x * (p - 0.5) * 2
-        y = (h - h * s) / 2 + pan_y * (p - 0.5) * 2
+        # Center the oversized frame, then drift it by +/- the pan amount.
+        x = (w - fw) / 2 + pan_x * (p - 0.5) * 2
+        y = (h - fh) / 2 + pan_y * (p - 0.5) * 2
+        # Clamp so coverage is GUARANTEED: left/top edge <= 0 AND right/bottom edge
+        # (x + fw) >= w  ->  x in [w - fw, 0]. fw > w so this interval is valid.
+        x = min(0.0, max(x, w - fw))
+        y = min(0.0, max(y, h - fh))
         return (x, y)
 
-    return clip.with_duration(duration).resized(scale).with_position(pos)
+    return clip.with_position(pos)
 
 
 def _ken_burns_clip(arr: np.ndarray, duration: float, pan_x: float, pan_y: float) -> ImageClip:
@@ -223,7 +245,14 @@ def _video_background_layers(window: float, video_paths: list[str]) -> list:
 
         scale = max(w / clip.w, h / clip.h)               # cover-fit
         clip = clip.resized(scale)
+        # Resize rounds to whole pixels, which can leave a dimension 1px UNDER the
+        # canvas. _ken_burns_motion assumes an exact w x h frame, so a sub-canvas
+        # frame here produces a bare edge (the ~49px bar). Bump back to full cover
+        # before the center-crop so the crop yields EXACTLY w x h.
+        if clip.w < w or clip.h < h:
+            clip = clip.resized(max(w / clip.w, h / clip.h))
         clip = clip.cropped(width=w, height=h, x_center=clip.w / 2, y_center=clip.h / 2)
+        logger.info("BG slot %d cover-crop dims: %dx%d (expect %dx%d)", i + 1, clip.w, clip.h, w, h)
 
         # Ken Burns on extended clips (fills time) and on every repeat (so the two
         # appearances of one clip read as distinct shots).
@@ -428,6 +457,33 @@ def build_video(
                 "Clip %.1f-%.1fs out of range (audio %.1fs); clamped to %.1f-%.1fs",
                 req_start, req_end, audio.duration, start, end,
             )
+
+        # Render-time sentence guard: protect EVERY render (even one fed a stale
+        # cached plan whose clip_end lands mid-sentence) from a hard mid-sentence
+        # audio cut. Look at the exact words that will become captions; if the last
+        # one doesn't end a sentence, pull `end` back to the latest caption word
+        # that does — but only while the window stays >= the floor. If correcting
+        # would drop below the floor, KEEP the cut and warn loudly (never silent).
+        guard_words = [
+            wd for wd in words
+            if wd.get("start") is not None and wd.get("end") is not None
+            and (wd.get("word") or "").strip()
+            and wd["end"] <= end + 0.05 and wd["start"] >= start - 0.05
+        ]
+        if guard_words:
+            last_word = max(guard_words, key=lambda wd: wd["end"])
+            if not _ends_sentence(last_word["word"]):
+                sentence_ends = [wd["end"] for wd in guard_words if _ends_sentence(wd["word"])]
+                corrected = max(sentence_ends) if sentence_ends else None
+                if corrected is not None and (corrected - start) >= config.CLIP_WINDOW_MIN_SECONDS:
+                    logger.info(
+                        "Render guard: clip_end pulled %.2f -> %.2f (last word %r was not a sentence end)",
+                        end, corrected, last_word["word"],
+                    )
+                    end = corrected
+                else:
+                    logger.warning("Mid-sentence cut KEPT (correction would drop window below floor)")
+
         window = end - start
         clip_audio = audio.subclipped(start, end)
         if background_images:
@@ -536,7 +592,7 @@ if __name__ == "__main__":
     else:
         print(f"Transcribing: {os.path.basename(audio_path)}", flush=True)
         transcript = transcribe.transcribe(audio_path)
-        highlights = ai_extract.extract_highlights(transcript)
+        highlights = ai_extract.extract_highlights_with_retry(transcript)
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump({"transcript": transcript, "highlights": highlights}, f)
 
@@ -547,7 +603,7 @@ if __name__ == "__main__":
     stale_vq = not vq or not all(isinstance(v, dict) for v in vq)
     if "search_queries" not in highlights or stale_vq:
         print("Cached plan missing/old search_queries/video_queries; regenerating extraction...", flush=True)
-        highlights = ai_extract.extract_highlights(transcript)
+        highlights = ai_extract.extract_highlights_with_retry(transcript)
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump({"transcript": transcript, "highlights": highlights}, f)
 
