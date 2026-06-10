@@ -99,55 +99,90 @@ SYSTEM_PROMPT = (
     "\"clarity\", \"mindset\" — these return generic stock photos).\n"
     "  - 2-4 words max, portrait-friendly composition preferred.\n"
     "  - All 5 visually distinct — no two should return the same type of scene.\n\n"
-    "VIDEO_QUERIES — think like a FILM EDITOR choosing B-roll for the chosen "
-    "clip, NOT like a photo picker. Produce EXACTLY 5 beats: 4 that together form "
-    "ONE coherent moving backdrop behind the clip, PLUS a 5th SPARE backup beat "
-    "(same palette/energy, yet a distinct scene from the other 4) kept in reserve "
-    "as a fallback. For EACH beat, work in TWO steps:\n"
-    "  STEP 1 — KEYWORD: read the ACTUAL spoken words inside the clip window "
-    "(clip_start..clip_end), split it into 4 emotional beats (opening, two middle "
-    "beats, payoff), and for each beat name ONE core CONCEPT KEYWORD that captures "
-    "its emotion — a single word such as wisdom, focus, calm, solitude, "
-    "discipline, clarity, stillness, resilience, overwhelm, or freedom. This "
-    "keyword is the emotional anchor.\n"
-    "  STEP 2 — QUERY: build a short (2-4 word) cinematic portrait stock-VIDEO "
-    "search query ANCHORED on that keyword — a concrete, filmable scene that "
-    "embodies it. e.g. keyword \"focus\" -> \"person reading quiet room\"; "
-    'keyword "solitude" -> "lone figure misty trail"; keyword "freedom" -> '
-    '"open road sunrise drive".\n'
-    "Rules for the queries: STRONGLY favor scenes with natural movement that loop "
-    "and crossfade smoothly — walking figures and silhouettes, nature in motion "
-    "(flowing water, drifting fog, trees in wind, waves, rain on glass), city "
-    "movement (traffic, crowds, trains, light trails), slow aerial / landscape "
-    "flyovers, and hands doing things (writing, brewing coffee, working). AVOID "
-    "static concepts that only exist as still photos (logos, charts, posed "
-    "headshots, a single object on a table). The captions already carry the "
-    "literal words, so match the overall MOOD, not the dictionary meaning. All 5 "
-    "KEYWORDS must be DISTINCT and all 5 QUERIES must be DISTINCT scenes, yet "
-    "TONALLY CONSISTENT with one another (same time of day / palette / energy) so "
-    "they crossfade as one continuous piece — do NOT mix a bright beach with a "
-    "dark city. Favor vertical-friendly compositions.\n"
-    "VIDEO QUERY RULES:\n"
-    "1. NEVER use literal nouns or proper nouns from the clip content.\n"
-    "   - content mentions stadium -> query 'person alone vast empty space'\n"
-    "   - content mentions city -> query 'lone figure urban dawn'\n"
-    "   - content mentions success -> query 'person confident morning light'\n"
-    "   - content mentions fear -> query 'person sitting alone in silence'\n"
-    "2. Each query must describe a CINEMATIC SCENE a stock photographer "
-    "would shoot — not a concept, not an event, not a place name.\n"
-    "3. The scene must feel like ELEVATION — upward motion, expansive "
-    "space, solitary focus, dawn light, quiet determination. Never "
-    "crowds, chaos, sports events, or celebrations.\n"
-    "4. Format: {\"keyword\": \"one emotion word\", \"query\": "
-    "\"filmable scene description\"}\n"
-    "Example for a calm clip about inner peace (4 primary + 1 spare): "
-    '[{"keyword": "stillness", "query": "misty forest morning"}, '
-    '{"keyword": "calm", "query": "slow river flowing"}, '
-    '{"keyword": "clarity", "query": "fog drifting mountains"}, '
-    '{"keyword": "solitude", "query": "person walking trail"}, '
-    '{"keyword": "serenity", "query": "lone boat still lake"}].\n\n'
-    "Clip length: aim for a window of "
-    f"{config.CLIP_WINDOW_MIN_SECONDS}-{config.CLIP_WINDOW_MAX_SECONDS} seconds. "
+    "VIDEO_QUERIES — you are a FILM EDITOR choosing B-roll for the chosen clip. "
+    "Produce EXACTLY 5 beats: 4 primary beats that map IN ORDER to the 4 quarters "
+    "of the clip window, PLUS a 5th SPARE backup (distinct scene, same tone) used "
+    "only if a primary clip can't be sourced.\n"
+    "For EACH of the 4 primary beats, work in two steps:\n"
+    "STEP 1 — Read the ACTUAL words spoken in that quarter of the clip. Identify "
+    "the CONCRETE SUBJECT or ACTION being discussed in those words — the real "
+    "thing a person is doing, making, facing, or working toward. Name it as a "
+    "filmable human action or scene, NOT an abstraction.\n"
+    '  - "work toward a goal / effort / striving" -> a person doing focused '
+    "physical effort: climbing, running uphill, training, building something\n"
+    '  - "education / learning / teaching" -> a person studying, writing at a '
+    "desk, reading in a classroom or library\n"
+    '  - "know yourself / reflection / inner work" -> a person journaling, '
+    "sitting alone in thought, writing by a window\n"
+    '  - "discipline / routine / daily habit" -> hands doing deliberate work, '
+    "early-morning preparation, repeated practice\n"
+    '  - "literature / poetry / writing" -> hands writing, pages turning, '
+    "someone reading a book closely\n"
+    "STEP 2 — Name ONE emotional keyword (the brand treatment) and build a 2-4 "
+    "word portrait stock-VIDEO query that combines the CONCRETE SCENE from Step 1 "
+    "with the brand's visual treatment: natural light, solitary or small-scale, "
+    "contemplative or determined motion. The scene comes from the content; the "
+    "mood/lighting comes from the brand.\n"
+    "RULES:\n"
+    "1. Each query MUST describe a concrete, filmable human scene that connects "
+    "to what's actually being said in that quarter of the clip. Prefer scenes "
+    "with natural movement (walking, writing, working hands, training, nature in "
+    "motion) that loop and crossfade. AVOID static objects, logos, charts, posed "
+    "headshots.\n"
+    '2. Do NOT use proper nouns, brand names, or place names (no "Harvard", no '
+    '"New York"). Generic settings are fine and encouraged (a classroom, a desk, '
+    "a trail, a gym) — these are scenes, not proper nouns.\n"
+    "3. Keep a consistent TREATMENT across all 5 (natural light, solitary, "
+    "contemplative/determined energy) so they crossfade as one piece — but the "
+    "SCENES themselves should be DISTINCT and content-driven, not five variations "
+    "of the same dawn-walk. All 5 keywords distinct, all 5 queries distinct. "
+    "Bias every query toward WARM, SOFT, NATURAL light and a CALM, contemplative "
+    "energy — golden-hour, window light, lamplight, soft shadow. Add a treatment "
+    "word to the query itself when it helps (e.g. 'student reading warm "
+    "lamplight', 'person writing soft morning light') so the stock search favors "
+    "cinematic, color-graded footage over flat, brightly-lit tutorial or "
+    "corporate B-roll. The goal is five clips that look color-graded by the same "
+    "hand.\n"
+    "4. The connection to content should be the SCENE (what's happening), the "
+    "brand should be the LIGHT and TONE (how it's shot). Match the subject, not "
+    "just the mood.\n"
+    "5. ALWAYS depict the ASPIRATIONAL version of the scene, never the "
+    "failure-state. When the spoken words describe a negative (ignorance, "
+    "laziness, shallowness, fear, giving up), do NOT film the negative literally "
+    "(no defeated, bored, blank, or sad subjects). Instead film the POSITIVE "
+    "counterpart of the same subject:\n"
+    "  - words mock shallow/ignorant teaching -> an engaged teacher or focused "
+    "student (the positive contrast), NOT a blank or bored person\n"
+    "  - words describe fear/avoidance -> a person facing the task with quiet "
+    "resolve, NOT someone cowering or defeated\n"
+    "  - words describe giving up -> someone persevering, NOT collapsing\n"
+    "The subject stays tied to the content; the energy stays upward. Every "
+    "scene should look like something the viewer would ASPIRE to, never "
+    "something they'd pity.\n"
+    "6. AVOID footage likely to contain legible on-screen TEXT — no whiteboards "
+    "or chalkboards with readable writing, no captioned screens, no signage. Our "
+    "captions are burned in; background text competes with them. Prefer the "
+    "human ACTION (a hand writing, a person reading, someone deep in thought) "
+    "over wide shots of boards covered in words.\n"
+    "7. Keep subjects CALM and INWARD, never performative. No one grinning at "
+    "camera, gesturing theatrically, presenting, or mid-laugh. The energy is "
+    "quiet determination and focus, not enthusiasm or showmanship — a person "
+    "absorbed in their work, not performing for an audience.\n"
+    '8. Format: {"keyword": "one emotion word", "query": "filmable scene"}\n'
+    "Example for a clip about effort, learning, and self-knowledge:\n"
+    '[{"keyword": "drive", "query": "person running uphill dawn"}, '
+    '{"keyword": "focus", "query": "student writing desk classroom"}, '
+    '{"keyword": "reflection", "query": "person journaling by window"}, '
+    '{"keyword": "resolve", "query": "hands writing notebook lamplight"}, '
+    '{"keyword": "solitude", "query": "lone figure quiet library"}]\n\n'
+    "Clip length: The clip window (clip_end - clip_start) MUST be at least "
+    f"{config.CLIP_WINDOW_MIN_SECONDS} seconds and MUST NOT exceed "
+    f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds — both are hard limits, not "
+    "targets. A complete short thought that runs under "
+    f"{config.CLIP_WINDOW_MIN_SECONDS} seconds is NOT acceptable — keep reading "
+    "forward through the transcript to include the actionable payoff, the "
+    "practical application, or the next concrete example until you reach the "
+    "floor. "
     "You may run slightly longer, but (clip_end - clip_start) MUST NEVER exceed "
     f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds under ANY circumstances. "
     "Within that hard limit, COMPLETENESS BEATS EXACT LENGTH: prefer a contiguous "
@@ -178,11 +213,20 @@ def _strip_to_json(text: str) -> str:
     fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
-    # Fallback: grab the outermost {...} span.
-    if not text.startswith("{"):
-        start, end = text.find("{"), text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            text = text[start : end + 1]
+    # Isolate the first complete JSON object: skip any leading prose to the first
+    # '{', then use raw_decode so trailing data AFTER the closing brace (the model
+    # sometimes appends a note/second object) doesn't trigger a "Extra data" error.
+    start = text.find("{")
+    if start != -1:
+        try:
+            obj, end = json.JSONDecoder().raw_decode(text, start)
+            return json.dumps(obj)
+        except json.JSONDecodeError:
+            # Couldn't cleanly decode from the first '{' — fall back to the
+            # outermost {...} span and let the caller's json.loads report.
+            last = text.rfind("}")
+            if last > start:
+                text = text[start : last + 1]
     return text
 
 
@@ -374,6 +418,56 @@ def _trim_to_cap(data: dict, words: list) -> None:
     data["clip_end"] = new_end
 
 
+def _extend_to_floor(highlights: dict, words: list[dict], segments: list[dict]) -> dict:
+    """Symmetric to ``_trim_to_cap``: rescue a clip that is TOO SHORT.
+
+    If the model picked a window under ``CLIP_WINDOW_MIN_SECONDS``, push
+    ``clip_end`` forward to the next sentence-ending word timestamp that brings
+    the window up to at least the floor (so the clip ends on a complete thought,
+    not mid-sentence). If no sentence boundary clears the floor within
+    ``CLIP_WINDOW_MAX_HARD_SECONDS``, fall back to the last sentence boundary
+    under the ceiling, then to the last segment end under the ceiling. No-op when
+    the clip already meets the floor. Mutates and returns ``highlights``.
+    """
+    start = highlights["clip_start"]
+    end = highlights["clip_end"]
+
+    if (end - start) >= config.CLIP_WINDOW_MIN_SECONDS:
+        return highlights  # nothing to do
+
+    floor_target = start + config.CLIP_WINDOW_MIN_SECONDS
+    hard_ceiling = start + config.CLIP_WINDOW_MAX_HARD_SECONDS
+
+    # Sentence-ending words AFTER the current clip_end, within the hard ceiling.
+    sentence_ends = [
+        w["end"] for w in words
+        if w["end"] > end
+        and w["end"] <= hard_ceiling
+        and w["word"].strip().rstrip("\"'").endswith((".", "!", "?"))
+    ]
+
+    # Prefer the FIRST sentence boundary that clears the floor.
+    candidates = [t for t in sentence_ends if t >= floor_target]
+    if candidates:
+        highlights["clip_end"] = candidates[0]
+    elif sentence_ends:
+        # No boundary clears the floor — take the last one under the ceiling.
+        highlights["clip_end"] = sentence_ends[-1]
+    else:
+        # No sentence boundaries at all — push to the last segment end under cap.
+        seg_ends = [s["end"] for s in segments if s["end"] > end and s["end"] <= hard_ceiling]
+        if seg_ends:
+            highlights["clip_end"] = seg_ends[-1]
+
+    if highlights["clip_end"] != end:
+        logger.warning(
+            "Clip window %.1fs under floor %ds; extending clip_end %.2f -> %.2f (now %.1fs)",
+            end - start, config.CLIP_WINDOW_MIN_SECONDS, end,
+            highlights["clip_end"], highlights["clip_end"] - start,
+        )
+    return highlights
+
+
 def _snap_to_sentences(data: dict, words: list) -> None:
     """Snap clip_start/clip_end onto real sentence boundaries (in place).
 
@@ -467,19 +561,24 @@ def extract_highlights(transcript: dict) -> dict:
     raw = next((b.text for b in response.content if b.type == "text"), "")
     parsed = json.loads(_strip_to_json(raw))
 
-    # Trim an over-long pick to a sentence boundary within the cap BEFORE
-    # validation, so a deterministic too-long-by-a-few-seconds thought is
-    # shortened rather than rejected (re-asking returns the same pick).
+    # Rescue an out-of-band pick at sentence boundaries BEFORE validation, so a
+    # deterministic too-short / too-long thought is adjusted rather than rejected
+    # (re-asking returns the same pick). Order matters: extend a too-short clip up
+    # to the floor first, THEN cap a too-long one back under the ceiling (extending
+    # can itself create an over-length window).
     words = transcript.get("words") if isinstance(transcript, dict) else None
     if words:
+        _extend_to_floor(parsed, words, segments or [])
         _trim_to_cap(parsed, words)
     _validate(parsed)
 
     # Snap onto real sentence boundaries so the clip never cuts a word in half
-    # and never opens/ends mid-thought, then re-cap (snapping clip_start earlier
-    # can nudge the window back over the limit).
+    # and never opens/ends mid-thought, then re-extend/re-cap: snapping clip_start
+    # later can drop the window back under the floor, and snapping it earlier can
+    # nudge it back over the ceiling.
     if words:
         _snap_to_sentences(parsed, words)
+        _extend_to_floor(parsed, words, segments or [])
         _trim_to_cap(parsed, words)
         window = parsed["clip_end"] - parsed["clip_start"]
         if window > config.CLIP_WINDOW_MAX_HARD_SECONDS:

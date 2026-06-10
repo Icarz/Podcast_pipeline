@@ -14,6 +14,7 @@ Resilience:
 
 import glob
 import hashlib
+import json
 import logging
 import os
 import time
@@ -32,6 +33,31 @@ _TARGET_RATIO = config.SLIDE_HEIGHT / config.SLIDE_WIDTH  # 1920/1080 ~= 1.778
 
 def _api_key() -> str | None:
     return os.environ.get("PEXELS_API_KEY")
+
+
+def _load_footage_history() -> list:
+    """Return list of previously-used Pexels video ids (most-recent last).
+
+    Missing/corrupt file -> []. Mirrors modules/posted_history.py's crash-safe
+    read so a bad ledger never breaks a run.
+    """
+    try:
+        with open(config.FOOTAGE_HISTORY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("used_video_ids", []) if isinstance(data, dict) else []
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+
+
+def _save_footage_history(ids: list) -> None:
+    """Persist used ids, capped to FOOTAGE_HISTORY_MAX most-recent."""
+    capped = ids[-config.FOOTAGE_HISTORY_MAX:]
+    try:
+        os.makedirs(os.path.dirname(config.FOOTAGE_HISTORY_PATH), exist_ok=True)
+        with open(config.FOOTAGE_HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump({"used_video_ids": capped}, f, indent=2)
+    except OSError as e:
+        logger.warning("Could not save footage history: %s", e)
 
 
 def query_slug(query: str) -> str:
@@ -123,14 +149,26 @@ def _best_vertical_file(video: dict) -> str | None:
     return min(files, key=score)["link"]
 
 
-def _find_video(query: str, used_ids: set | None = None) -> tuple[str | None, int | None]:
-    """Search ``query`` across orientations for a usable, not-yet-used video.
+def _find_video(
+    query: str, used_ids: set | None = None, history_ids: set | None = None
+) -> tuple[str | None, int | None]:
+    """Search ``query`` across orientations for a usable video.
 
-    Pulls several candidates per query and skips any whose Pexels video id is in
-    ``used_ids`` so the same clip never fills two background slots. Returns
-    ``(download_url, video_id)``, or ``(None, None)`` if nothing usable is left.
+    Two-tier dedup:
+      * ``used_ids`` — HARD block: ids already taken THIS run. Never returned, so
+        the same clip can't fill two slots of one video.
+      * ``history_ids`` — SOFT avoid: ids used by PREVIOUS episodes. Preferred to
+        skip so episodes don't share footage, but kept as a fallback: if every
+        candidate for this query is exhausted against history, we return the best
+        history clip (not in ``used_ids``) rather than leave the slot empty — a
+        cross-episode repeat beats a hole.
+
+    Pulls several candidates per query. Returns ``(download_url, video_id)``, or
+    ``(None, None)`` if nothing usable is left at all.
     """
     used_ids = used_ids or set()
+    history_ids = history_ids or set()
+    fallback: tuple[str, int] | None = None  # best history-but-not-this-run clip
     for orientation in config.PEXELS_ORIENTATIONS:
         data = _request(query, orientation, per_page=config.PEXELS_VIDEO_PER_PAGE)
         if not data:
@@ -138,12 +176,27 @@ def _find_video(query: str, used_ids: set | None = None) -> tuple[str | None, in
         for video in data.get("videos", []):
             vid = video.get("id")
             if vid in used_ids:
-                logger.info("Pexels video %s for %r already used; skipping to next", vid, query)
+                logger.info("Pexels video %s for %r already used this run; skipping to next", vid, query)
                 continue
             url = _best_vertical_file(video)
-            if url:
-                logger.info("Pexels match for %r (%s): video %s", query, orientation, vid)
-                return url, vid
+            if not url:
+                continue
+            if vid in history_ids:
+                # Used by a prior episode: hold the first such clip as a last
+                # resort and keep looking for one that's fresh vs history.
+                if fallback is None:
+                    fallback = (url, vid)
+                logger.info("Pexels video %s for %r in footage history; holding as fallback", vid, query)
+                continue
+            logger.info("Pexels match for %r (%s): video %s", query, orientation, vid)
+            return url, vid
+    if fallback is not None:
+        url, vid = fallback
+        logger.warning(
+            "Slot fell back to previously-used footage id %s (history exhausted for query '%s')",
+            vid, query,
+        )
+        return url, vid
     logger.warning("No unused Pexels video found for %r in any orientation", query)
     return None, None
 
@@ -244,7 +297,7 @@ def fetch_photo(query: str, path: str, force: bool = False) -> str | None:
 
 
 def _acquire_for_query(
-    query: str, out_dir: str, force: bool, used_ids: set
+    query: str, out_dir: str, force: bool, used_ids: set, history_ids: set | None = None
 ) -> tuple[str, int] | None:
     """Get ONE usable, not-yet-used clip for ``query`` (cache or fresh download).
 
@@ -252,18 +305,21 @@ def _acquire_for_query(
     ``None`` if this query can't yield a fresh distinct clip. Does NOT mutate
     ``used_ids`` — the caller records the id once it commits the slot.
     """
+    history_ids = history_ids or set()
     slug = query_slug(query)
 
-    # Cache HIT only counts if its id hasn't already been taken by an earlier
-    # slot. A collision falls through to a fresh fetch that _find_video forces to
-    # a different, unused id.
+    # Cache HIT only counts if its id wasn't taken by an earlier slot this run AND
+    # wasn't used by a previous episode — otherwise two episodes sharing a query
+    # (same slug -> same cache file) would reuse the same clip, defeating the
+    # cross-episode ledger. A miss falls through to a fresh fetch, where
+    # _find_video forces a different id (or a deliberate history fallback).
     cached = None if force else _cached_for_slug(out_dir, slug)
-    if cached and cached[1] is not None and cached[1] not in used_ids:
+    if cached and cached[1] is not None and cached[1] not in used_ids and cached[1] not in history_ids:
         cpath, cvid = cached
         logger.info("Pexels background cached: %s (video %s)", os.path.basename(cpath), cvid)
         return cpath, cvid
 
-    url, vid = _find_video(query, used_ids)
+    url, vid = _find_video(query, used_ids, history_ids)
     if url and vid is not None:
         path = os.path.join(out_dir, f"{config.BG_IMAGE_PREFIX}{slug}_{vid}.mp4")
         if _download(url, path):
@@ -299,18 +355,21 @@ def fetch_backgrounds(queries: list[str], out_dir: str = None, force: bool = Fal
     primary = queries[:n_slots]
     spares = queries[n_slots:]  # the 5th+ backup queries
 
+    prior_ids = _load_footage_history()        # cross-episode history (soft avoid)
+    history_ids: set = set(prior_ids)          # ids used by PREVIOUS episodes
     paths: list[str] = []
     chosen_ids: list[int] = []   # final id per filled slot, for the distinctness log
     used_ids: set = set()        # Pexels video ids already taken this run -> no repeats.
+    newly_used: list = []        # ids picked THIS run, in order, to append to the ledger
     spare_triggered = False
 
     for slot_i, query in enumerate(primary):
-        got = _acquire_for_query(query, out_dir, force, used_ids)
+        got = _acquire_for_query(query, out_dir, force, used_ids, history_ids)
 
         # Primary query gave nothing fresh -> dip into the spare pool.
         if got is None:
             for spare in spares:
-                got = _acquire_for_query(spare, out_dir, force, used_ids)
+                got = _acquire_for_query(spare, out_dir, force, used_ids, history_ids)
                 if got is not None:
                     spare_triggered = True
                     logger.info("Slot %d fell back to spare query %r", slot_i + 1, spare)
@@ -322,12 +381,16 @@ def fetch_backgrounds(queries: list[str], out_dir: str = None, force: bool = Fal
 
         path, vid = got
         used_ids.add(vid)
+        newly_used.append(vid)
         paths.append(path)
         chosen_ids.append(vid)
 
     if not paths:
         logger.warning("Pexels returned no usable backgrounds")
         return None
+
+    # Persist this run's picks so the NEXT episode avoids them (capped, oldest out).
+    _save_footage_history(prior_ids + newly_used)
 
     # Confirm every filled slot got a distinct Pexels video id (no clip repeats).
     distinct = len(set(chosen_ids)) == len(chosen_ids)

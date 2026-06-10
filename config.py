@@ -66,6 +66,13 @@ ROTATION = {
 # successful YouTube upload. See modules/posted_history.py.
 POSTED_HISTORY_PATH = os.path.join(TMP_DIR, "posted_history.json")
 
+# Footage-history ledger: Pexels video ids used by PREVIOUS episodes, so a new
+# episode never re-pulls the same stock clip. See modules/pexels_bg.py. Capped to
+# the most-recent FOOTAGE_HISTORY_MAX ids (oldest evicted) so the file can't grow
+# unbounded and eventually starve every query of fresh candidates.
+FOOTAGE_HISTORY_PATH = os.path.join(TMP_DIR, "footage_history.json")
+FOOTAGE_HISTORY_MAX = 300   # cap; evict oldest ids beyond this
+
 # --- HTTP ---
 # Browser-like headers so feeds/CDNs that block default clients still respond.
 BROWSER_HEADERS = {
