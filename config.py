@@ -168,6 +168,23 @@ PEXELS_SIZE = "medium"
 PEXELS_TIMEOUT = 60                  # seconds per HTTP request
 PEXELS_BACKOFFS = [2, 4, 8, 16]      # waits between retries on 429 (free tier = 200 req/hr)
 
+# --- Background-clip QUALITY GATE (modules/bg_quality.py) ---
+# Post-fetch, pre-commit guardrails that inspect a candidate's Pexels poster
+# frames (the `video_pictures` previews — NO full download) and reject footage
+# the SYSTEM_PROMPT can ask against but can't actually see: too-dark/off-palette
+# shots, close-up/identifiable faces & group settings, and legible on-screen
+# text. `_find_video` skips a failing candidate and walks to the next of the
+# PEXELS_VIDEO_PER_PAGE results; if EVERY candidate fails it keeps the best one
+# as a last resort (a filled slot beats an empty one). Face/text checks need
+# opencv (opencv-python-headless); without it the gate degrades to brightness
+# only. Set BG_QUALITY_ENABLED=False to bypass entirely.
+BG_QUALITY_ENABLED = True
+BG_QUALITY_FRAMES = 4                # poster frames sampled per candidate (median/any-aggregated)
+BG_BRIGHTNESS_MIN = 42              # reject if MEDIAN frame luma (0-255) below this (dark/dim/off-palette)
+BG_FACE_AREA_MAX = 0.10            # reject if any one face bbox covers > this frac of the frame (close-up portrait)
+BG_FACE_COUNT_MAX = 1              # reject if more than this many faces detected in a frame (group/crowd/classroom)
+BG_TEXT_COVER_MAX = 0.045          # reject if text-like regions cover > this frac of the frame (signage/flipchart/book)
+
 # Ken Burns + crossfade for the AI background montage.
 BG_CROSSFADE = 1.0                   # seconds of crossfade overlap between images
 BG_KENBURNS_ZOOM_FROM = 1.08         # start scale; margin (1080*.08/2=43px) > pan so edges never show

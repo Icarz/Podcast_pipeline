@@ -36,7 +36,10 @@ SYSTEM_PROMPT = (
     "this check, pick the next best clip that passes it.\n\n"
     "The JSON object must have exactly these keys:\n"
     '  "hook"        : string — a scroll-stopping one-line hook for the clip.\n'
-    '  "insights"    : array of exactly 3 strings — the key takeaways.\n'
+    '  "insights"    : array of exactly 3 strings — the key takeaways. Each '
+    "insight MUST be <= 110 characters total. Concise, scannable, sayable in one "
+    "breath. Long insights make slide text shrink and become unreadable at "
+    "thumbnail size. Hard cap, no exceptions.\n"
     '  "best_quote"  : string — the single most quotable verbatim line from the '
     "speaker. It MUST pass ALL of these tests:\n"
     "      1. Works as a standalone screenshot — someone seeing it with zero "
@@ -82,6 +85,19 @@ SYSTEM_PROMPT = (
     "close-ups. Each prompt must be vivid, specific, and self-contained "
     "(describe the scene, lighting, mood, and framing), suitable as a darkened "
     "background behind bold captions in a vertical 9:16 video.\n\n"
+    "NEVER DEPICT (HARD BLACKLIST — applies to BOTH video_queries AND "
+    "search_queries). NEVER produce queries that would surface footage/photos "
+    "depicting any of these:\n"
+    "  - Hunched, slumped, head-down, or seated-in-defeat human postures. The "
+    "body must read upright, in motion, or in calm purposeful stillness.\n"
+    "  - Smoking, vaping, drinking alcohol, drug use, junk food, or any active "
+    "vice or unhealthy behavior.\n"
+    "  - Readable signage, graffiti, books with legible text, flipcharts, "
+    "screens displaying words, or any on-screen text that a viewer can read.\n"
+    "  - Crowds, stadiums, conferences, presentations to audiences, or any "
+    "group/event setting.\n"
+    "  - Faces of identifiable people (close-up portraits where the person is "
+    "the subject).\n\n"
     "SEARCH_QUERIES — exactly 5 Pexels PHOTO search queries, one per slide IN "
     "ORDER:\n"
     "  [0] cover — visual that matches the hook's energy and stakes.\n"
@@ -98,7 +114,13 @@ SYSTEM_PROMPT = (
     "  - Do NOT use abstract concepts as queries (no \"success\", \"ambition\", "
     "\"clarity\", \"mindset\" — these return generic stock photos).\n"
     "  - 2-4 words max, portrait-friendly composition preferred.\n"
-    "  - All 5 visually distinct — no two should return the same type of scene.\n\n"
+    "  - All 5 visually distinct — no two should return the same type of scene.\n"
+    "  - PALETTE: All 5 search_queries must share the same single tonal palette "
+    "chosen for the video (see VIDEO_QUERIES rule 8). Slide photos and video clips "
+    "must feel like one body of work, not five different accounts. Apply the SAME "
+    "two hard requirements as rule 8: APPEND the palette's lighting treatment "
+    "word to EVERY query, and NEVER pick a scene whose real-world light fights the "
+    "palette (no fog/overcast/night/dusk under a warm palette, etc.).\n\n"
     "VIDEO_QUERIES — you are a FILM EDITOR choosing B-roll for the chosen clip. "
     "Produce EXACTLY 5 beats: 4 primary beats that map IN ORDER to the 4 quarters "
     "of the clip window, PLUS a 5th SPARE backup (distinct scene, same tone) used "
@@ -113,7 +135,8 @@ SYSTEM_PROMPT = (
     '  - "education / learning / teaching" -> a person studying, writing at a '
     "desk, reading in a classroom or library\n"
     '  - "know yourself / reflection / inner work" -> a person journaling, '
-    "sitting alone in thought, writing by a window\n"
+    "writing by a window, or walking a quiet path deep in thought (upright and "
+    "in motion, never slumped or sitting in silence)\n"
     '  - "discipline / routine / daily habit" -> hands doing deliberate work, '
     "early-morning preparation, repeated practice\n"
     '  - "literature / poetry / writing" -> hands writing, pages turning, '
@@ -153,8 +176,10 @@ SYSTEM_PROMPT = (
     "counterpart of the same subject:\n"
     "  - words mock shallow/ignorant teaching -> an engaged teacher or focused "
     "student (the positive contrast), NOT a blank or bored person\n"
-    "  - words describe fear/avoidance -> a person facing the task with quiet "
-    "resolve, NOT someone cowering or defeated\n"
+    "  - words describe fear/avoidance/uncertainty -> a person walking forward "
+    "through morning fog, a hand reaching toward warm light, or someone facing "
+    "the task with quiet resolve — NEVER someone cowering, defeated, or sitting "
+    "alone in silence\n"
     "  - words describe giving up -> someone persevering, NOT collapsing\n"
     "The subject stays tied to the content; the energy stays upward. Every "
     "scene should look like something the viewer would ASPIRE to, never "
@@ -168,13 +193,45 @@ SYSTEM_PROMPT = (
     "camera, gesturing theatrically, presenting, or mid-laugh. The energy is "
     "quiet determination and focus, not enthusiasm or showmanship — a person "
     "absorbed in their work, not performing for an audience.\n"
-    '8. Format: {"keyword": "one emotion word", "query": "filmable scene"}\n'
-    "Example for a clip about effort, learning, and self-knowledge:\n"
-    '[{"keyword": "drive", "query": "person running uphill dawn"}, '
-    '{"keyword": "focus", "query": "student writing desk classroom"}, '
-    '{"keyword": "reflection", "query": "person journaling by window"}, '
-    '{"keyword": "resolve", "query": "hands writing notebook lamplight"}, '
-    '{"keyword": "solitude", "query": "lone figure quiet library"}]\n\n'
+    "8. TONAL CONSISTENCY: All 4 video_queries (slots 1-4) AND the 5th spare beat "
+    "must share ONE tonal palette across the clip. Pick ONE of: warm-natural "
+    "(sunrise/golden hour outdoor), cool-cinematic (overcast/dawn/blue hour), or "
+    "warm-interior (lamplit indoor). State the chosen palette in your reasoning. "
+    "Mixing palettes across slots is forbidden. Two hard requirements:\n"
+    "  (a) APPEND the palette's lighting treatment word(s) to EVERY query (not "
+    "just some) so the stock search is forced toward one look — e.g. warm-natural "
+    "-> end each query with 'golden hour' or 'warm sunlight'; cool-cinematic -> "
+    "'blue hour' or 'soft overcast light'; warm-interior -> 'warm lamplight' or "
+    "'soft window light'.\n"
+    "  (b) Do NOT pick a SCENE whose real-world light fights the chosen palette. "
+    "A scene that is intrinsically a different tone CANNOT be saved by a treatment "
+    "word and is forbidden. Under warm-natural / warm-interior, NEVER use fog, "
+    "mist, overcast, rain, night, dusk-blue, snow, or dim/shadowed-room scenes "
+    "(they render cool/grey no matter the query). Under cool-cinematic, NEVER use "
+    "harsh midday sun or orange-sunset scenes. If a beat's natural scene can't be "
+    "shot in the chosen palette, swap to a different scene that can, or pull a "
+    "safe-scene from rule 10 that fits the palette.\n"
+    "9. The \"keyword\" must name an ASPIRATIONAL or neutral emotional state, "
+    "never a negative/passive one. NEVER use keywords like overwhelm, fear, "
+    "anxiety, defeat, or exhaustion; name the aspirational counterpart instead "
+    "(clarity, awareness, conviction, stillness, momentum, focus, resolve). A "
+    "negative keyword pulls defeated footage even when the query reads fine.\n"
+    "10. SAFE-SCENE FALLBACK: If the content discusses an abstract concept "
+    "(neuroplasticity, identity, meaning) where no specific filmable scene "
+    "exists, default to ONE of the following safe scenes that always read "
+    "on-brand: lone runner on a forest path, hands writing in a notebook in warm "
+    "light, figure walking through morning mist, person watching sunrise from a "
+    "high vantage point, slow aerial over mountains or coastline. Do not try to "
+    "literalize an abstract concept; pick the safe scene closest in mood.\n"
+    '11. Format: {"keyword": "one emotion word", "query": "filmable scene"}\n'
+    "Example for a clip about effort, learning, and self-knowledge (ONE palette — "
+    "warm-interior, every beat lamplit / indoor morning light so they cut as one "
+    "film):\n"
+    '[{"keyword": "focus", "query": "student writing desk lamplight"}, '
+    '{"keyword": "drive", "query": "person climbing stairs morning light"}, '
+    '{"keyword": "resolve", "query": "hands writing notebook warm light"}, '
+    '{"keyword": "momentum", "query": "person walking hallway window light"}, '
+    '{"keyword": "stillness", "query": "figure reading book warm lamp"}]\n\n'
     "Clip length: The clip window (clip_end - clip_start) MUST be at least "
     f"{config.CLIP_WINDOW_MIN_SECONDS} seconds and MUST NOT exceed "
     f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds — both are hard limits, not "

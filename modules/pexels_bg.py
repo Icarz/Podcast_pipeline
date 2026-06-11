@@ -23,6 +23,7 @@ import requests
 from dotenv import load_dotenv
 
 import config
+from modules import bg_quality
 
 load_dotenv()
 
@@ -169,6 +170,7 @@ def _find_video(
     used_ids = used_ids or set()
     history_ids = history_ids or set()
     fallback: tuple[str, int] | None = None  # best history-but-not-this-run clip
+    quality_fallback: tuple[str, int] | None = None  # best fresh clip that failed the quality gate
     for orientation in config.PEXELS_ORIENTATIONS:
         data = _request(query, orientation, per_page=config.PEXELS_VIDEO_PER_PAGE)
         if not data:
@@ -188,13 +190,34 @@ def _find_video(
                     fallback = (url, vid)
                 logger.info("Pexels video %s for %r in footage history; holding as fallback", vid, query)
                 continue
-            logger.info("Pexels match for %r (%s): video %s", query, orientation, vid)
+            # Quality gate: reject footage that contradicts the brand (too dark /
+            # off-palette, close-up or group faces, legible on-screen text) by
+            # inspecting the candidate's poster frames only (no full download). A
+            # failing candidate is held as a last resort so the gate can never
+            # leave a slot empty — it just prefers a clip that passes.
+            ok, reason, metrics = bg_quality.assess(video)
+            if not ok:
+                if quality_fallback is None:
+                    quality_fallback = (url, vid)
+                logger.info(
+                    "Pexels video %s for %r failed quality gate (%s) %s; skipping to next",
+                    vid, query, reason, metrics,
+                )
+                continue
+            logger.info("Pexels match for %r (%s): video %s [quality %s]", query, orientation, vid, metrics)
             return url, vid
     if fallback is not None:
         url, vid = fallback
         logger.warning(
             "Slot fell back to previously-used footage id %s (history exhausted for query '%s')",
             vid, query,
+        )
+        return url, vid
+    if quality_fallback is not None:
+        url, vid = quality_fallback
+        logger.warning(
+            "All fresh candidates for %r failed the quality gate; using best-effort id %s",
+            query, vid,
         )
         return url, vid
     logger.warning("No unused Pexels video found for %r in any orientation", query)
