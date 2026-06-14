@@ -82,23 +82,26 @@ Publish is then explicitly skipped (logged as a warning).
 
 ### Content performance data (drives prompt decisions)
 
-Production data from the same account in the same week (YouTube + TikTok + Instagram) showing 300x variance between best and worst content — these numbers directly shaped the `SYSTEM_PROMPT` rules:
+Production data from the same account (YouTube + TikTok + Instagram) showing 400x variance between best and worst content — these numbers directly shaped the `SYSTEM_PROMPT` rules. Updated Jun 14, 2026:
 
 | Content | Platform | Result |
 |---------|----------|--------|
-| "Opt Out of Modern Culture Before It Breaks You" | YT | 619 views, 100% like ratio |
-| "Always Grab the Right Handle" (Epictetus/stoic) | YT | 284 views in 1 day, 90% like ratio |
-| "Always Grab the Right Handle" | TikTok | 240 views |
+| "Always Grab the Right Handle" (Epictetus/stoic) | YT | **948 views**, 93.8% like ratio |
+| "Your Brain Is Addicted to Fake Scenarios" (neurological) | YT | **873 views**, 100% like ratio (posted Jun 13) |
+| "Your Brain Is Addicted to Fake Scenarios" | TikTok | **529 views**, 38 likes |
+| "Always Grab the Right Handle" | TikTok | **502 views** |
+| "Opt Out of Modern Culture Before It Breaks You" | YT | 621 views, 100% like ratio |
 | Dramatic winter silhouette thumbnail | IG | 397 views |
-| "Why Students Tune Out The Real Reason" | YT | 4 views, Shorts policy flag |
+| "Why Students Tune Out The Real Reason" | YT | ~7 views, Shorts policy flag |
 | "The 3 Word Trick That Makes Personal Change" | YT | 2 views, Shorts policy flag |
 | Warm interior woman-at-window thumbnail | IG | 28 views |
 
 **Key patterns:**
-- Contrarian identity-frame hooks outperform instructional hooks by **100–300x** (619 vs 2-4 views)
-- Stoic/philosophical framing outperforms neuroscience/technique framing
+- Contrarian identity-frame hooks outperform instructional hooks by **100–400x** (873–948 vs 2-7 views)
+- **Neurological framing now matches stoic framing** — "Your Brain Is Addicted" (873 YT, 529 TikTok) is neck-and-neck with "Always Grab the Right Handle" (948 YT, 502 TikTok); both trap the viewer as the *subject* of a system acting on them
+- Cross-platform consistency confirmed: YouTube ranking and TikTok ranking are nearly identical — what wins on one wins on the other
 - Dramatic solitary landscape thumbnails outperform warm interior by **14x** on Instagram grid
-- Hooks that could be YouTube tutorial titles ("Why X…", "The Y Trick…") get flagged by Shorts policy
+- Hooks that could be YouTube tutorial titles ("Why X…", "The Y Trick…") get flagged by Shorts policy and die on TikTok too
 
 These findings drove: the HOOK RULES contrarian-identity-frame formula, the TIER 1 (dramatic landscape) scene priority default, DRAMATIC-NATURAL as the default palette, and the cover slide priority rule for `search_queries[0]`.
 
