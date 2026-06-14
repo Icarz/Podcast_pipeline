@@ -54,9 +54,7 @@ DEFAULT_FEED = "mindset_mentor"
 # non-posting day: --auto logs "no posting day today" and exits 0.
 ROTATION = {
     0: "modern_wisdom",    # Monday
-    1: "jordan_peterson",  # Tuesday
-    2: "huberman_lab",     # Wednesday
-    3: "jocko_podcast",    # Thursday
+    2: "jordan_peterson",  # Wednesday
     4: "daily_stoic",      # Friday
     5: "mindset_mentor",   # Saturday
 }
