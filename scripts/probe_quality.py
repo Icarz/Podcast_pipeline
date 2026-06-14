@@ -20,10 +20,15 @@ CLIPS = [
     (26755590, "mindset slot1 runner forest golden",         "GOOD"),
     (30074961, "mindset slot3 athlete training sunrise",     "GOOD"),
     (15787200, "mindset slot4 hilltop sunset silhouette",    "GOOD"),
-    (37848044, "huberman slot3 kitchen meal prep",           "GOOD"),
+    (37848044, "huberman slot3 kitchen meal prep",           "BAD"),
     (35128964, "mindset slot2 notebook flatlay",             "GOOD"),
     (34762874, "huberman slot4 giant orange sun",            "GOOD?"),
     (6550432,  "huberman slot2 hand writing blue window",    "GOOD?"),
+    (36109128, "athlete working out",                        "GOOD"),
+    (29886401, "hiking mountain trail",                      "GOOD"),
+    (6273831,  "musician playing guitar",                    "GOOD"),
+    (8298323,  "father son playing outdoor",                 "GOOD"),
+    (29053190, "father daughter playing outdoor",            "GOOD"),
 ]
 
 
