@@ -80,6 +80,18 @@ Publish is then explicitly skipped (logged as a warning).
 - `video_gen.build_video(audio_path, words, highlights, podcast_name=, background_images=)` → output MP4 path.
 - `slide_gen.build_slides(highlights)` → list of 5 ordered PNG paths.
 
+### Content direction (the non-negotiable brand purpose)
+
+Every clip and carousel must serve at least one of these four outcomes for the viewer:
+- **Self-awareness** — they understand their own behavior, mind, or patterns better
+- **New perspective** — they see themselves or life through a lens they didn't have before
+- **Hope + agency** — they leave feeling there is a path forward, not trapped
+- **Self-knowledge** — they learn something true about how humans (and therefore they) work
+
+The content universe is: human behavior, neurology, focus, motivation, identity, resilience, self-improvement, meaning. **Overthinking is a side-topic only** — never the primary theme. A clip that only diagnoses a problem without offering uplift, a new lens, or implied agency fails the brand. Banter, trivia, and entertainment anecdotes with no transferable insight are always rejected.
+
+When a podcast episode is centered on a theme already covered recently (e.g. overthinking, procrastination), the pipeline must search harder for a different angle buried deeper in the same episode — identity, meaning, perspective, resilience, or self-knowledge.
+
 ### Content performance data (drives prompt decisions)
 
 Production data from the same account (YouTube + TikTok + Instagram) showing 400x variance between best and worst content — these numbers directly shaped the `SYSTEM_PROMPT` rules. Updated Jun 14, 2026:
