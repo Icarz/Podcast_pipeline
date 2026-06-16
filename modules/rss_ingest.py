@@ -12,6 +12,11 @@ import re
 import unicodedata
 from urllib.parse import unquote, urlparse
 
+from anthropic import Anthropic
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import feedparser
 import yt_dlp
 
@@ -175,27 +180,175 @@ def fetch_from_url(url: str, title: str | None = None) -> dict:
     }
 
 
-def pick_random_entry(feed_url: str, exclude_guids: set) -> tuple | None:
-    """Parse ``feed_url`` and return ``(feed, entry, metadata)`` for a random unused episode.
+def _brand_score(entry) -> int:
+    """Count how many brand keywords appear in the episode title + description.
 
-    Filters out every entry whose GUID is in ``exclude_guids``, then picks one
-    at random from what remains. Returns ``None`` when every entry in the feed's
-    current RSS window has already been used — the caller should log and skip.
+    Used as a weight for weighted-random selection so on-brand episodes are
+    more likely to be picked without completely excluding lower-scoring ones.
+    """
+    text = (
+        (entry.get("title") or "") + " " + (entry.get("summary") or "")
+    ).lower()
+    return sum(1 for kw in config.EPISODE_BRAND_KEYWORDS if kw in text)
+
+
+def _is_off_brand(entry) -> bool:
+    """True if the episode violates the content direction.
+
+    Two-layer check:
+    - Title vs EPISODE_REJECT_KEYWORDS (single words/short phrases, strict):
+      catches obvious off-brand topics before any description is read.
+    - Description (first 500 chars) vs EPISODE_REJECT_DESC_PHRASES
+      (multi-word phrases, more specific): catches episodes whose title sounds
+      on-brand but whose description signals institutional critique, scandal,
+      or off-brand content (e.g. "replication crisis" wouldn't appear in the
+      title "Why Is Behavioural Genetics Such A Hated Science?" but does in
+      its description).
+    """
+    title = (entry.get("title") or "").lower()
+    if any(kw in title for kw in config.EPISODE_REJECT_KEYWORDS):
+        return True
+
+    desc = (entry.get("summary") or entry.get("description") or "")[:500].lower()
+    if any(phrase in desc for phrase in config.EPISODE_REJECT_DESC_PHRASES):
+        logger.debug(
+            "Episode %r rejected on description-level phrase match",
+            entry.get("title"),
+        )
+        return True
+
+    return False
+
+
+def _prescreen_episode(title: str, description: str) -> bool:
+    """Ask Claude Haiku if this episode likely contains on-brand content.
+
+    Binary YES/NO call using the cheapest model (~$0.0003). Runs BEFORE the
+    audio download so a borderline episode that passes keyword filters but
+    would still yield an off-brand clip is caught at minimal cost.
+
+    Fails open on any API error — a broken prescreen never blocks the pipeline.
+    Bypassed entirely when ``config.PRESCREEN_ENABLED`` is False.
+    """
+    if not config.PRESCREEN_ENABLED:
+        return True
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return True
+
+    desc_snippet = (description or "")[:400]
+    prompt = (
+        f"Podcast episode title: {title}\n"
+        f"Description: {desc_snippet}\n\n"
+        "Does this episode likely contain at least one clear, self-contained insight "
+        "about human psychology, personal identity, resilience, focus, motivation, "
+        "emotional regulation, or self-awareness — something a viewer could apply "
+        "directly to their own life and sense of self?\n\n"
+        "Respond with ONLY 'YES' or 'NO'."
+    )
+    try:
+        client = Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model=config.PRESCREEN_MODEL,
+            max_tokens=5,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        answer = (response.content[0].text or "").strip().upper()
+        passed = answer.startswith("YES")
+        logger.info(
+            "Prescreen %s for %r", "PASSED" if passed else "FAILED", title
+        )
+        return passed
+    except Exception as exc:
+        logger.warning(
+            "Prescreen API call failed (%s); passing episode through", exc
+        )
+        return True
+
+
+def pick_random_entry(feed_url: str, exclude_guids: set) -> tuple | None:
+    """Parse ``feed_url`` and return ``(feed, entry, metadata)`` for a random on-brand unused episode.
+
+    Three-stage selection:
+      1. Drop GUIDs already in ``exclude_guids`` (used episodes).
+      2. Drop episodes whose title matches ``config.EPISODE_REJECT_KEYWORDS``
+         (off-brand: economics, politics, sports, entertainment, current events).
+      3. Weighted-random pick from what remains: each episode's weight is
+         (brand_score + 1) where brand_score counts ``config.EPISODE_BRAND_KEYWORDS``
+         hits in title + description — so on-brand episodes are more likely but
+         every episode keeps a non-zero chance.
+
+    Falls back to the full unused pool (skipping only step 2) when ALL unused
+    episodes are filtered out by the reject list, so the pipeline never stalls
+    on a feed whose current window happens to be all off-brand.
+    Returns ``None`` only when every entry has already been used.
     """
     feed = _parse_feed(feed_url)
-    available = [e for e in feed.entries if _entry_guid(e) not in exclude_guids]
-    if not available:
+    unused = [e for e in feed.entries if _entry_guid(e) not in exclude_guids]
+    if not unused:
         logger.info(
             "All %d entries in the RSS window are already used for this feed",
             len(feed.entries),
         )
         return None
-    entry = random.choice(available)
+
+    on_brand = [e for e in unused if not _is_off_brand(e)]
+    if not on_brand:
+        logger.warning(
+            "All %d unused episodes were filtered by reject keywords; "
+            "falling back to unfiltered pool",
+            len(unused),
+        )
+        on_brand = unused
+
+    rejected_count = len(unused) - len(on_brand)
+    weights = [_brand_score(e) + 1 for e in on_brand]
+
+    # Prescreen up to PRESCREEN_MAX_ATTEMPTS candidates with a cheap Haiku call
+    # before committing to a full download + transcription. Already-tried entries
+    # are removed from the pool each round so we never ask about the same episode
+    # twice. Falls back to the highest brand-scored episode if all attempts fail.
+    visited: set[int] = set()
+    chosen = None
+
+    for attempt in range(1, config.PRESCREEN_MAX_ATTEMPTS + 1):
+        remaining = [
+            (e, w) for e, w in zip(on_brand, weights) if id(e) not in visited
+        ]
+        if not remaining:
+            break
+        rem_entries, rem_weights = zip(*remaining)
+        candidate = random.choices(rem_entries, weights=rem_weights, k=1)[0]
+        visited.add(id(candidate))
+
+        if _prescreen_episode(
+            candidate.get("title", ""),
+            candidate.get("summary") or candidate.get("description") or "",
+        ):
+            chosen = candidate
+            break
+
+        logger.info(
+            "Prescreen attempt %d/%d failed for %r; trying another",
+            attempt, config.PRESCREEN_MAX_ATTEMPTS, candidate.get("title"),
+        )
+
+    if chosen is None:
+        logger.warning(
+            "All %d prescreen attempts failed; falling back to highest "
+            "brand-scored episode in pool",
+            config.PRESCREEN_MAX_ATTEMPTS,
+        )
+        chosen = max(on_brand, key=_brand_score)
+
     logger.info(
-        "Random episode selected: %r (%d unused / %d total in RSS window)",
-        entry.get("title"), len(available), len(feed.entries),
+        "Random episode selected: %r (brand_score=%d | %d on-brand / %d unused "
+        "/ %d total | %d rejected by keywords)",
+        chosen.get("title"), _brand_score(chosen),
+        len(on_brand), len(unused), len(feed.entries), rejected_count,
     )
-    return feed, entry, _entry_metadata(entry)
+    return feed, chosen, _entry_metadata(chosen)
 
 
 def peek_latest(feed_url: str) -> dict:

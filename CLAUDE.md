@@ -94,23 +94,25 @@ When a podcast episode is centered on a theme already covered recently (e.g. ove
 
 ### Content performance data (drives prompt decisions)
 
-Production data from the same account (YouTube + TikTok + Instagram) showing 400x variance between best and worst content — these numbers directly shaped the `SYSTEM_PROMPT` rules. Updated Jun 14, 2026:
+Production data from the same account (YouTube + TikTok + Instagram) showing 100x+ variance between best and worst content — these numbers directly shaped the `SYSTEM_PROMPT` rules. Updated Jun 16, 2026 (last-28-days window):
 
 | Content | Platform | Result |
 |---------|----------|--------|
-| "Always Grab the Right Handle" (Epictetus/stoic) | YT | **948 views**, 93.8% like ratio |
-| "Your Brain Is Addicted to Fake Scenarios" (neurological) | YT | **873 views**, 100% like ratio (posted Jun 13) |
+| "Your Brain Is Addicted to Fake Scenarios" (neurological) | YT | **945 views** (last 28d), 100% like ratio — #1 performer |
+| "Opt Out of Modern Culture Before It Breaks You" | YT | **621 views** (last 28d), 100% like ratio |
+| "Always Grab the Right Handle" (Epictetus/stoic) | YT | **549 views** (last 28d), 93.8% like ratio |
+| "You're Not Obsessed Enough" | YT | 170 views (last 28d) |
 | "Your Brain Is Addicted to Fake Scenarios" | TikTok | **529 views**, 38 likes |
 | "Always Grab the Right Handle" | TikTok | **502 views** |
-| "Opt Out of Modern Culture Before It Breaks You" | YT | 621 views, 100% like ratio |
 | Dramatic winter silhouette thumbnail | IG | 397 views |
 | "Why Students Tune Out The Real Reason" | YT | ~7 views, Shorts policy flag |
-| "The 3 Word Trick That Makes Personal Change" | YT | 2 views, Shorts policy flag |
+| "The 3 Word Trick That Makes Personal Change" | YT | 9 views, Shorts policy flag |
 | Warm interior woman-at-window thumbnail | IG | 28 views |
 
 **Key patterns:**
-- Contrarian identity-frame hooks outperform instructional hooks by **100–400x** (873–948 vs 2-7 views)
-- **Neurological framing now matches stoic framing** — "Your Brain Is Addicted" (873 YT, 529 TikTok) is neck-and-neck with "Always Grab the Right Handle" (948 YT, 502 TikTok); both trap the viewer as the *subject* of a system acting on them
+- Contrarian identity-frame hooks outperform instructional hooks by **100x+** (945 vs 9 views)
+- **Neurological framing now leads stoic framing** — "Your Brain Is Addicted" (945 YT last 28d) has overtaken "Always Grab the Right Handle" (549 YT last 28d); neurological hooks that trap the viewer as the *subject* of a brain system are the current top format
+- Both neurological and stoic frames share the same mechanic: viewer is acted upon by a force beyond their awareness — prioritize this over any other hook type
 - Cross-platform consistency confirmed: YouTube ranking and TikTok ranking are nearly identical — what wins on one wins on the other
 - Dramatic solitary landscape thumbnails outperform warm interior by **14x** on Instagram grid
 - Hooks that could be YouTube tutorial titles ("Why X…", "The Y Trick…") get flagged by Shorts policy and die on TikTok too

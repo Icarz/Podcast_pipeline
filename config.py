@@ -19,30 +19,36 @@ LOG_FILE = os.path.join(LOGS_DIR, "pipeline.log")
 
 # --- Podcast RSS feeds (verified live June 2026; select by key) ---
 # Each value is the show's official RSS URL — verify against the source in the
-# trailing comment. The first four are the weekly ROTATION (see below).
+# trailing comment. The first five are the weekly ROTATION (see below).
+# ROTATION PHILOSOPHY: prefer solo-speaker / monologue-format shows. Interview
+# podcasts produce two-voice clips that perform poorly as Shorts.
 PODCAST_FEEDS = {
-    # Modern Wisdom — Chris Williamson (Megaphone)   https://feeds.megaphone.fm/modernwisdom
-    "modern_wisdom":  "https://feeds.megaphone.fm/modernwisdom",
-    # Huberman Lab — Andrew Huberman (Megaphone)     https://feeds.megaphone.fm/hubermanlab
-    "huberman_lab":   "https://feeds.megaphone.fm/hubermanlab",
-    # The Daily Stoic — Ryan Holiday (Art19)         https://rss.art19.com/the-daily-stoic
-    "daily_stoic":    "https://rss.art19.com/the-daily-stoic",
-    # The Mindset Mentor — Rob Dial (Simplecast)     https://feeds.simplecast.com/rpKQEwel
-    "mindset_mentor": "https://feeds.simplecast.com/rpKQEwel",
+    # On Purpose — Jay Shetty (Omny)                 https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/32f1779e-bc01-4d36-89e6-afcb01070c82/e0c8382f-48d4-42bb-89d5-afcb01075cb4/podcast.rss
+    # Solo + interview mix; solo eps are pure monologue. Brand: identity/mindset.
+    "jay_shetty":     "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/32f1779e-bc01-4d36-89e6-afcb01070c82/e0c8382f-48d4-42bb-89d5-afcb01075cb4/podcast.rss",
+    # The Mel Robbins Podcast (Simplecast)            https://feeds.simplecast.com/UCwaTX1J
+    # Solo motivational; consistently single-speaker. Brand: identity/resilience.
+    "mel_robbins":    "https://feeds.simplecast.com/UCwaTX1J",
     # The Jordan B. Peterson Podcast (Megaphone)     https://feeds.megaphone.fm/BVDWV6444647327
     # NOTE: canonical PUBLIC feed (per Apple + jordanbpeterson.com + podnews).
     # Recent episodes are Daily Wire+ members-only; public RSS lags (newest
     # public ep was Nov 2025 as of June 2026). --auto dedup handles re-pulls.
     "jordan_peterson": "https://feeds.megaphone.fm/BVDWV6444647327",
-    # Jocko Podcast — Jocko Willink (RedCircle)      https://feeds.redcircle.com/64a89f88-a245-4098-8d8d-496325ec4f74
-    # Active, ~2x/week (main + Jocko Underground). Verified live June 2026.
+    # The Daily Stoic — Ryan Holiday (Art19)         https://rss.art19.com/the-daily-stoic
+    # Pure solo monologue (5–10 min commentary). Highest single-speaker signal.
+    "daily_stoic":    "https://rss.art19.com/the-daily-stoic",
+    # The Mindset Mentor — Rob Dial (Simplecast)     https://feeds.simplecast.com/rpKQEwel
+    # Solo monologue. Brand: neuroscience/behavior/identity.
+    "mindset_mentor": "https://feeds.simplecast.com/rpKQEwel",
+    # --- manual-run only (not in rotation) ---
+    # Modern Wisdom — Chris Williamson (interview format; 2-speaker risk)
+    "modern_wisdom":  "https://feeds.megaphone.fm/modernwisdom",
+    # Huberman Lab — Andrew Huberman (Megaphone)     https://feeds.megaphone.fm/hubermanlab
+    "huberman_lab":   "https://feeds.megaphone.fm/hubermanlab",
+    # Jocko Podcast — Jocko Willink (RedCircle)
     "jocko_podcast":  "https://feeds.redcircle.com/64a89f88-a245-4098-8d8d-496325ec4f74",
-    # Not in the rotation; kept for manual runs.     https://feeds.megaphone.fm/ISML9402684841
-    # SOLVED with Mark Manson (monthly, drops the 1st). "The Mark Manson Show"
-    # is not a current show; SOLVED is Manson's active podcast. Verified June 2026.
+    # SOLVED with Mark Manson (monthly)
     "mark_manson":    "https://feeds.megaphone.fm/ISML9402684841",
-    # Not in the rotation; kept for manual runs.     https://feeds.simplecast.com/UCwaTX1J
-    "mel_robbins":    "https://feeds.simplecast.com/UCwaTX1J",
 }
 
 # Default feed used when none is specified.
@@ -53,11 +59,99 @@ DEFAULT_FEED = "mindset_mentor"
 # date.weekday() is Mon=0, Tue=1, ..., Sun=6. Any weekday NOT listed is a
 # non-posting day: --auto logs "no posting day today" and exits 0.
 ROTATION = {
-    0: "modern_wisdom",    # Monday
+    0: "jay_shetty",       # Monday
+    1: "mel_robbins",      # Tuesday
     2: "jordan_peterson",  # Wednesday
     4: "daily_stoic",      # Friday
     5: "mindset_mentor",   # Saturday
 }
+
+# --- Episode content pre-filter (used by rss_ingest.pick_random_entry) ---
+# Episodes whose TITLE matches any EPISODE_REJECT_KEYWORDS word are dropped
+# before random selection — they're clearly off-brand regardless of what's
+# buried inside. Case-insensitive substring match on the episode title only
+# (descriptions are too verbose and noisy for hard rejection).
+EPISODE_REJECT_KEYWORDS = [
+    # Economics / finance / markets
+    "economy", "economic", "econom", "finance", "financial", "investing",
+    "investment", "stock market", "crypto", "bitcoin", "nft", "hedge fund",
+    "venture capital", "private equity", "real estate", "tax", "inflation",
+    "recession", "debt", "money management", "wealth building",
+    # Politics / ideology / debate
+    "politics", "political", "election", "government", "policy", "congress",
+    "democrat", "republican", "president", "prime minister", "war", "military",
+    "geopolit", "climate change", "immigration",
+    "anarchy", "anarchism", "libertarian", "socialism", "communism", "capitalism",
+    "debate", "vs.", " vs ", "ideology", "manifesto",
+    # Sports / entertainment / celebrity
+    "nfl", "nba", "nhl", "mlb", "ufc", "mma", "boxing", "football", "basketball",
+    "baseball", "soccer", "tennis", "golf", "athlete", "championship",
+    "celebrity", "actor", "actress", "movie", "film", "hollywood", "music industry",
+    # Time-specific / news
+    "covid", "pandemic", "coronavirus", "lockdown",
+]
+
+# Episodes whose title OR description contains any of these words are scored
+# higher and preferred during random selection. Purely additive — a zero-score
+# episode is still eligible, just less likely to be picked than a scored one.
+# Each match adds 1 point; random.choices weights by (score + 1) so every
+# episode has a non-zero probability.
+# Description-level reject phrases — checked against the first 500 chars of the
+# episode description (summary). More specific than EPISODE_REJECT_KEYWORDS
+# (which targets titles) to avoid false positives on verbose descriptions.
+# Use multi-word phrases where possible; single words only when unambiguous.
+EPISODE_REJECT_DESC_PHRASES = [
+    # Science/institutional scandal
+    "replication crisis", "replication failure", "research fraud",
+    "scientific misconduct", "peer review scandal", "statistically invalid",
+    "retracted stud", "false positive result",
+    # Finance / markets (description-level)
+    "stock market", "investment portfolio", "asset allocation",
+    "interest rate", "hedge fund", "venture capital",
+    "cryptocurrency", "blockchain technology", "nft",
+    # Politics / elections
+    "election result", "political campaign", "voting rights",
+    "foreign policy", "immigration policy", "border control",
+    "government spending", "federal budget", "tax policy",
+    # Crime / legal
+    "criminal trial", "convicted", "lawsuit", "legal battle",
+    "war crime", "genocide", "terrorism",
+    # Entertainment / sports scores
+    "box office", "movie premiere", "film release", "album drop",
+    "super bowl", "world cup", "grand slam", "championship game",
+    "box office gross",
+]
+
+EPISODE_BRAND_KEYWORDS = [
+    # Core universe
+    "psychology", "mindset", "behavior", "behaviour", "mental", "brain",
+    "neuroscience", "neurology", "cognitive", "consciousness",
+    # Identity / self
+    "identity", "self-", "confidence", "purpose", "meaning", "fulfillment",
+    "self-worth", "self-image", "ego", "authenticity",
+    # Performance / habit
+    "habit", "discipline", "focus", "productivity", "performance", "routine",
+    "willpower", "motivation", "drive", "ambition", "goal",
+    # Resilience / growth
+    "resilience", "adversity", "overcome", "struggle", "growth", "grit",
+    "stoic", "stoicism", "philosophy", "wisdom", "virtue",
+    # Emotional / relational
+    "emotion", "emotional", "anxiety", "fear", "stress", "relationship",
+    "loneliness", "connection", "trauma", "healing", "therapy",
+    # Thinking / decision
+    "decision", "thinking", "awareness", "perception", "belief", "bias",
+    "perspective", "reframe", "clarity",
+]
+
+# Episode pre-screen (Claude Haiku call before download).
+# A binary YES/NO call using the cheapest model — checks whether an episode
+# likely contains on-brand content BEFORE committing to a 45–80 MB download
+# and full Groq transcription. Tries up to PRESCREEN_MAX_ATTEMPTS random picks
+# from the on-brand pool; falls back to the highest brand-scored episode if all
+# fail. Set PRESCREEN_ENABLED=False to bypass (e.g. in tests or offline runs).
+PRESCREEN_ENABLED = True
+PRESCREEN_MODEL = "claude-haiku-4-5-20251001"
+PRESCREEN_MAX_ATTEMPTS = 3
 
 # Posted-history log: which episodes have already been uploaded (keyed by RSS
 # GUID) so --auto never re-posts the same episode. Written ONLY after a

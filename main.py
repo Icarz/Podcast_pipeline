@@ -214,11 +214,19 @@ def run(feed_arg: str, episode: dict | None = None, privacy_status: str = "priva
     podcast_name = _display_name(feed_arg)
     logger.info("Starting pipeline | feed=%s -> %s", feed_arg, feed_url)
 
-    # 1) Ingest: parse the feed and download the latest episode's audio (unless
-    #    an already-ingested episode was handed in by run_auto).
+    # 1) Ingest: pick a random unused episode from the feed (or use the
+    #    pre-fetched episode handed in by run_auto so the feed is parsed once).
     if episode is None:
-        logger.info("[1/6] Ingest: latest episode from feed")
-        episode = rss_ingest.fetch_latest(feed_url)
+        used_guids = set(posted_history.load().keys())
+        picked = rss_ingest.pick_random_entry(feed_url, exclude_guids=used_guids)
+        if picked is None:
+            raise RuntimeError(
+                f"All episodes in the RSS window for '{feed_arg}' have already been used. "
+                "Delete tmp/posted_history.json to reset."
+            )
+        feed_obj, entry, _ = picked
+        logger.info("[1/6] Ingest: random episode selected, downloading")
+        episode = rss_ingest.download_latest(feed_obj, entry)
     else:
         logger.info("[1/6] Ingest: using pre-fetched episode (feed parsed once)")
     audio_path = episode["audio_path"]

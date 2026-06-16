@@ -71,7 +71,20 @@ SYSTEM_PROMPT = (
     "   TOPIC DIVERSITY: if the transcript's central topic is one you've likely used "
     "recently (e.g. overthinking, procrastination), search HARDER for a different "
     "angle in the same transcript — look for clips on identity, meaning, perspective, "
-    "resilience, or self-knowledge that are buried deeper in the episode.\n\n"
+    "resilience, or self-knowledge that are buried deeper in the episode.\n"
+    "5. SINGLE SPEAKER — HARD RULE: The selected clip window MUST contain ONE person "
+    "speaking uninterrupted. It must sound like a monologue, lecture, or sustained "
+    "personal reflection — NOT a conversation. REJECT any window where:\n"
+    "   - An interviewer or second voice asks a question (even short fillers like "
+    "'right?', 'yeah', 'exactly', 'so tell me', 'what do you mean' from anyone "
+    "other than the main speaker disqualify the window).\n"
+    "   - The transcript shows back-and-forth rhythm: short sentence → short "
+    "response → short sentence → short response.\n"
+    "   - Any exchange structure is present, even partial.\n"
+    "   If the episode is an interview, scan for sections where the interviewee "
+    "speaks without interruption for 45-58 seconds straight. These exist in almost "
+    "every interview — find them. A qualifying window should feel like the person "
+    "forgot they were being interviewed and just started talking.\n\n"
     "HOOK RULES — these determine 90% of whether the clip gets views.\n\n"
     "The hook MUST use a CONTRARIAN IDENTITY FRAME. It must challenge the viewer's "
     "current behavior or worldview and imply they are on the wrong side of a divide. "
@@ -103,6 +116,30 @@ SYSTEM_PROMPT = (
     "  - GOOD: 'The meal you ate last night stole 2 hours of deep sleep from you'\n"
     "  - BAD: 'How to rewire your brain to love discipline'\n"
     "  - GOOD: 'Your brain has been secretly punishing you for trying to improve'\n\n"
+    "REAL REJECTED EXAMPLE — memorize this failure pattern:\n"
+    "  Episode: 'Why Is Behavioural Genetics Such A Hated Science?'\n"
+    "  REJECTED hook: 'Science told millions the wrong story — and nobody apologized'\n"
+    "  REJECTED insights:\n"
+    "    - 'Entire careers were built on genetic research that turned out to be 99% unreplicable.'\n"
+    "    - 'The system laundered bad science: negative results buried, positive ones published.'\n"
+    "    - 'Science reformed itself — but never told the public it had been wrong for decades.'\n"
+    "  WHY FULLY REJECTED:\n"
+    "    (a) Hook is institutional — it describes what science did to 'millions', not what is "
+    "happening TO the viewer. No 'you', no identity frame, no agency.\n"
+    "    (b) All 3 insights are 3rd-person descriptions of an external institution. The viewer "
+    "learns about a scandal — not about themselves. Zero self-awareness payoff.\n"
+    "    (c) The viewer leaves feeling deceived by institutions with no path forward. This fails "
+    "the HOPE + AGENCY brand outcome completely.\n"
+    "  CORRECT REFRAME from the same episode:\n"
+    "    GOOD hook: 'You've been building beliefs about yourself on science that was never proven'\n"
+    "    GOOD insights:\n"
+    "      - 'Your self-image may rest on studies that never replicated — and nobody told you.'\n"
+    "      - 'You accepted expert consensus without knowing their evidence was statistically void.'\n"
+    "      - 'The beliefs you hold about your own nature may have been shaped by bad data.'\n"
+    "  KEY RULE: Any episode about science, institutions, history, or external systems MUST be "
+    "reframed to show how it acts on the VIEWER — their beliefs, their self-image, their "
+    "identity, their decisions. If you cannot find a moment where the external topic lands "
+    "INSIDE the viewer's life, that episode fails the brand mission — pick a different clip.\n\n"
     "The JSON object must have exactly these keys:\n"
     '  "hook"        : string — a contrarian identity-frame hook, under 15 words. See HOOK RULES above.\n'
     '  "insights"    : array of exactly 3 strings — the key takeaways. Each '
@@ -465,6 +502,71 @@ def _validate(data: dict) -> None:
         )
 
 
+def _brand_gate(data: dict) -> None:
+    """Raise ValueError if the extracted clip fails the brand mission gate.
+
+    Three checks — all must pass or the retry wrapper re-extracts:
+
+    1. HOOK IDENTITY FRAME — the hook must address the viewer directly
+       ("you/your") or use an imperative contrarian structure ("Stop …",
+       "Every …"). Hooks that describe an external system or event
+       ("Science told millions…", "The reason why…") are banned by the
+       SYSTEM_PROMPT but still slip through; this catches them in code.
+
+    2. INSIGHT PERSON — at least 2 of 3 insights must be 2nd-person identity
+       statements containing "you" or "your". Insights written entirely in 3rd
+       person ("The system laundered bad science…", "Entire careers were
+       built…") signal a diagnostic clip about external events — not a clip
+       that gives the viewer self-awareness or agency.
+
+    3. NO-AGENCY PATTERNS — certain hook phrases signal a pure exposure/scandal
+       frame with zero path forward ("nobody apologized", "they lied", "the
+       scandal"). These always fail the hope+agency brand outcome regardless of
+       how interesting the underlying topic is.
+    """
+    hook = data.get("hook", "")
+    insights = data.get("insights", [])
+    hook_lower = hook.lower()
+
+    # 1. Hook must address the viewer or use a contrarian imperative.
+    identity_signals = ["you", "your", "we ", "our ", "stop ", "every ", "nobody "]
+    if not any(sig in hook_lower for sig in identity_signals):
+        raise ValueError(
+            f"BRAND GATE — hook fails identity-frame check (no viewer address or "
+            f"imperative): {hook!r}. Must contain 'you/your' or a contrarian imperative."
+        )
+
+    # 2. At least 2/3 insights must be 2nd-person identity statements.
+    second_person_count = sum(
+        1 for ins in insights
+        if "you" in ins.lower() or "your" in ins.lower()
+    )
+    if second_person_count < 2:
+        raise ValueError(
+            f"BRAND GATE — only {second_person_count}/3 insights are 2nd-person "
+            f"identity statements. Insights must address the viewer, not describe "
+            f"external systems. Insights: {insights}"
+        )
+
+    # 3. Hook must not be a pure scandal/exposure frame with no viewer agency.
+    no_agency_phrases = [
+        "nobody apologized", "nobody told", "they never told", "lied to",
+        "the scandal", "exposed the", "they hid", "covered up",
+    ]
+    if any(phrase in hook_lower for phrase in no_agency_phrases):
+        raise ValueError(
+            f"BRAND GATE — hook is a pure diagnosis/scandal frame with no viewer "
+            f"agency: {hook!r}. The viewer must leave with a reframe or path, "
+            "not just an exposure."
+        )
+
+    logger.info(
+        "Brand gate PASSED — hook identity: yes, 2nd-person insights: %d/3, "
+        "agency: yes | hook=%r",
+        second_person_count, hook,
+    )
+
+
 _SENTENCE_END = (".", "!", "?")
 
 
@@ -682,6 +784,7 @@ def extract_highlights(transcript: dict) -> dict:
         _extend_to_floor(parsed, words, segments or [])
         _trim_to_cap(parsed, words)
     _validate(parsed)
+    _brand_gate(parsed)
 
     # Snap onto real sentence boundaries so the clip never cuts a word in half
     # and never opens/ends mid-thought, then re-extend/re-cap: snapping clip_start
