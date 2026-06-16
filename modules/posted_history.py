@@ -44,30 +44,56 @@ def is_posted(guid: str) -> bool:
     return guid in load()
 
 
+def mark_used(guid: str, feed: str, title: str) -> None:
+    """Retire an episode at render time, before the YouTube upload.
+
+    Called immediately after the clip plan is built so the episode is excluded
+    from future random selection even when the YouTube upload later fails.
+    Idempotent — a re-render of the same episode (cache hit) is a no-op.
+    No-op (with a warning) when ``guid`` is falsy.
+    """
+    if not guid:
+        logger.warning("No GUID for episode %r; NOT recording to used history", title)
+        return
+    data = load()
+    if guid in data:
+        return  # already retired; don't overwrite (preserves youtube_url if set)
+    data[guid] = {
+        "feed": feed,
+        "title": title,
+        "used_at": datetime.now(timezone.utc).isoformat(),
+        "youtube_url": None,
+    }
+    os.makedirs(os.path.dirname(PATH), exist_ok=True)
+    with open(PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    logger.info("Retired episode at render time: %r (guid=%s)", title, guid)
+
+
 def record(guid: str, feed: str, title: str, youtube_url: str) -> None:
-    """Append/overwrite the entry for ``guid`` after a successful upload.
+    """Set the YouTube URL on an already-retired episode after a successful upload.
 
-    Idempotent by design: re-recording an existing GUID (e.g. a manual re-upload
-    of an episode already in the log) simply OVERWRITES the entry — latest upload
-    wins (fresh ``posted_at`` + ``youtube_url``), never an error.
-
-    No-op (with a warning) when ``guid`` is falsy — we never want to key the log
-    on an empty string and silently collapse distinct episodes together.
+    The episode should already be in the log (written by :func:`mark_used` at
+    render time); this just stamps the ``youtube_url`` and ``posted_at`` fields.
+    Safe to call even if ``mark_used`` was somehow skipped — creates the entry.
+    No-op (with a warning) when ``guid`` is falsy.
     """
     if not guid:
         logger.warning("No GUID for episode %r; NOT recording to posted history", title)
         return
     data = load()
-    data[guid] = {
+    entry = data.get(guid, {})
+    entry.update({
         "feed": feed,
         "title": title,
         "posted_at": datetime.now(timezone.utc).isoformat(),
         "youtube_url": youtube_url,
-    }
+    })
+    data[guid] = entry
     os.makedirs(os.path.dirname(PATH), exist_ok=True)
     with open(PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    logger.info("Recorded posted episode: %r (guid=%s)", title, guid)
+    logger.info("Recorded YouTube URL for episode: %r (guid=%s)", title, guid)
 
 
 if __name__ == "__main__":

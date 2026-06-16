@@ -231,6 +231,16 @@ def run(feed_arg: str, episode: dict | None = None, privacy_status: str = "priva
     cs, ce = float(highlights["clip_start"]), float(highlights["clip_end"])
     logger.info("Clip window: %.2f-%.2fs (%.1fs)", cs, ce, ce - cs)
 
+    # Retire the episode immediately after the plan is built so a YouTube
+    # failure later doesn't leave it available for re-selection next run.
+    guid = episode.get("guid")
+    if guid and feed_arg != "manual":
+        posted_history.mark_used(
+            guid=guid,
+            feed=feed_arg,
+            title=episode.get("title", ""),
+        )
+
     # 4) Background selection: Pexels video -> Gemini image -> gradient chain.
     logger.info("[4/6] Backgrounds: select (Pexels -> Gemini -> gradient)")
     backgrounds = background.select_backgrounds(highlights)
@@ -257,19 +267,15 @@ def run(feed_arg: str, episode: dict | None = None, privacy_status: str = "priva
         episode, highlights, video_path, slides, privacy_status=privacy_status
     )
 
-    # 8) Record the episode in the posted-history log ONLY on a successful
-    #    YouTube upload, so a failed upload leaves no entry and the next --auto
-    #    run retries this same episode instead of skipping it.
+    # 8) Stamp the YouTube URL on the already-retired episode entry (written at
+    #    render time above). A YouTube failure is fine — the episode is already
+    #    excluded from future random selection regardless.
     if publish.get("youtube_url") and not publish.get("youtube_error"):
         posted_history.record(
             guid=episode.get("guid"),
             feed=feed_arg,
             title=episode.get("title"),
             youtube_url=publish["youtube_url"],
-        )
-    elif publish.get("youtube_error"):
-        logger.warning(
-            "YouTube upload failed; NOT recording to posted history (next run will retry)"
         )
 
     logger.info("Pipeline complete for: %s", episode.get("title"))
@@ -285,18 +291,17 @@ def run(feed_arg: str, episode: dict | None = None, privacy_status: str = "priva
 
 
 def run_auto(privacy_status: str = "private") -> dict | None:
-    """Rotation entry point: pick today's feed and process its latest episode.
+    """Rotation entry point: pick today's feed and process a random unused episode.
 
     Resolves today's weekday against ``config.ROTATION`` and:
-      * not a posting day  -> log and return None (caller exits 0),
-      * feed unreachable    -> log and return None (caller exits 0),
-      * latest already posted (GUID in the history log) -> log and return None,
-      * otherwise           -> run the full pipeline via :func:`run`.
+      * not a posting day           -> log and return None,
+      * feed unreachable            -> log and return None,
+      * all RSS entries already used -> log and return None,
+      * otherwise                   -> pick a random unused episode and run the
+                                       full pipeline via :func:`run`.
 
-    The GUID pre-check uses :func:`rss_ingest.peek_latest`, which parses the feed
-    WITHOUT downloading audio — so an already-posted or unreachable feed costs no
-    bandwidth. Returns the :func:`run` result dict, or None when there is nothing
-    to do.
+    Episodes are retired at render time (not post time), so a YouTube failure
+    never leaves an episode re-eligible for selection next run.
     """
     weekday = date.today().weekday()
     feed_key = config.ROTATION.get(weekday)
@@ -305,28 +310,25 @@ def run_auto(privacy_status: str = "private") -> dict | None:
         return None
 
     feed_url = config.PODCAST_FEEDS[feed_key]
-    logger.info("Auto mode: %s -> feed '%s'", _WEEKDAY_NAMES[weekday], feed_key)
+    logger.info("Auto mode: %s -> feed '%s' (random episode)", _WEEKDAY_NAMES[weekday], feed_key)
 
-    # Parse the feed ONCE here. A feed that is unreachable / unparseable / empty
-    # is a clean no-op, not a failure, so the next day's scheduled run is
-    # unaffected. We reuse this same parsed entry for the download below, so the
-    # whole --auto run hits the feed exactly once.
+    used_guids = set(posted_history.load().keys())
+
     try:
-        feed, entry, latest = rss_ingest.parse_latest(feed_url)
+        picked = rss_ingest.pick_random_entry(feed_url, exclude_guids=used_guids)
     except Exception as exc:  # noqa: BLE001 - feed problems must not break scheduling
         logger.warning("Auto mode: feed '%s' unavailable (%s); exiting cleanly", feed_key, exc)
         return None
 
-    guid = latest.get("guid")
-    if posted_history.is_posted(guid):
+    if picked is None:
         logger.info(
-            "Auto mode: latest episode already posted, exiting (%r, guid=%s)",
-            latest.get("title"), guid,
+            "Auto mode: all episodes in '%s' RSS window already used; nothing to do",
+            feed_key,
         )
         return None
 
-    logger.info("Auto mode: new episode to process: %r (guid=%s)", latest.get("title"), guid)
-    # Download the SAME parsed entry (no second feed parse) and hand it to run().
+    feed, entry, meta = picked
+    logger.info("Auto mode: episode selected: %r (guid=%s)", meta.get("title"), meta.get("guid"))
     episode = rss_ingest.download_latest(feed, entry)
     return run(feed_key, episode=episode, privacy_status=privacy_status)
 

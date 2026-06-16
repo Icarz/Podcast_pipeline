@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A podcast-to-short-form-video pipeline. For the latest episode of an RSS feed it:
+A podcast-to-short-form-video pipeline. For a randomly selected episode from a podcast RSS feed it:
 ingest → transcribe → AI clip plan → pick background → render a vertical karaoke-captioned MP4 (with a music bed) → render a 5-slide editorial carousel. Publish/upload stages are scaffolded but not wired in yet.
 
 Windows-first (font paths, PowerShell setup, UTF-8 console shim). Python 3.12.
@@ -57,16 +57,16 @@ tuning constants — modules import from it rather than hardcoding. Change behav
 there, not in module bodies.
 
 The `main.py` flow:
-1. `rss_ingest.fetch_latest(feed_url)` — parse feed, download latest episode audio.
-2-3. `_load_or_build_plan(audio_path)` — transcribe + extract, cached together as `tmp/<basename>.plan.json`.
+1. `rss_ingest.pick_random_entry(feed_url, exclude_guids)` — parse feed, filter already-used GUIDs, pick a random unused episode; `download_latest` fetches its audio. (Manual runs use `fetch_latest` instead.)
+2-3. `_load_or_build_plan(audio_path)` — transcribe + extract, cached together as `tmp/<basename>.plan.json`. Immediately after this step, `posted_history.mark_used()` retires the episode so it can never be re-selected, even if the YouTube upload later fails.
 4. `background.select_backgrounds(highlights)` — Pexels video → Gemini → gradient.
 5. `video_gen.build_video(...)` — the karaoke MP4.
 6. `slide_gen.build_slides(highlights)` — the 5-PNG carousel.
-Publish is then explicitly skipped (logged as a warning).
+Publish is then best-effort (R2 + YouTube); failures are logged but never fatal.
 
 ### Data contracts (what each module produces/consumes now)
 
-- `rss_ingest.fetch_latest(feed_url)` → `{"title", "audio_path", "description", "link"}`.
+- `rss_ingest.pick_random_entry(feed_url, exclude_guids)` → `(feed, entry, metadata)` — random unused episode from the RSS window (used by `--auto`). `rss_ingest.fetch_latest(feed_url)` → `{"title", "audio_path", "description", "link"}` — always-latest, used by manual runs only.
 - `transcribe.transcribe(audio_path)` → `{"text", "segments":[{start,end,text}], "words":[{word,start,end}]}` (Groq `whisper-large-v3`, word + segment granularity).
 - `ai_extract.extract_highlights(transcript)` → validated JSON dict with exactly these keys:
   `hook, insights[3], best_quote, title, clip_start, clip_end, hashtags[3-8], image_prompts[4], search_queries[5], video_queries[5]`.
@@ -170,6 +170,7 @@ The returned list is **homogeneous**: either all `.mp4` (video) or all `.png` (i
 - `pexels_bg` caches video as **`tmp/bg_<query-sha1[:12]>_<video-id>.mp4`** (keyed by the search query, with the Pexels id embedded — **not** `bg_<n>` by slot index) and slide photos as `tmp/slide_bg_<query-hash>.jpg`; `image_gen` caches `tmp/bg_<n>.png`. Pass `force=True` to regenerate. Because the filename is query-keyed, a new episode whose `video_queries` differ fetches fresh footage automatically, while re-rendering the same episode (identical queries) reuses the cached download.
 - Cross-episode footage ledger: `tmp/footage_history.json` records every Pexels id used by past runs (see the two-tier dedup note above), capped at `config.FOOTAGE_HISTORY_MAX` (300, **oldest-evicted**). It's a **separate file from the `bg_*.mp4` clips**, so it persists across runs and survives `tmp/bg_*.mp4` cache cleanup — wiping the cached clips does *not* reset dedup history. Delete `footage_history.json` itself to forget history.
 - When iterating on rendering, rely on these caches rather than re-running upstream stages. (To force *new* footage for the same queries, pass `force=True` or delete that episode's `tmp/bg_*.mp4` — there is no shared-by-index reuse, so deleting one episode's files won't disturb another's.)
+- **Episode dedup ledger:** `tmp/posted_history.json` — keyed by RSS GUID. `posted_history.mark_used()` writes here immediately after the plan is built (step 2-3 of `run()`), so the episode is retired from random selection even when the YouTube upload fails. `posted_history.record()` later stamps the `youtube_url` field when YouTube succeeds. `pick_random_entry` loads this file and excludes all known GUIDs before picking. **RSS window constraint:** standard feeds only expose ~20–50 episodes; random selection is bounded to that window. When every entry in the window is used, `--auto` logs "all episodes already used" and exits cleanly (not an error).
 
 ## External services & secrets
 

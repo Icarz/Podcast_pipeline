@@ -7,6 +7,7 @@ episode's audio URL from its enclosures, and downloads the MP3 with yt-dlp.
 import hashlib
 import logging
 import os
+import random
 import re
 import unicodedata
 from urllib.parse import unquote, urlparse
@@ -172,6 +173,29 @@ def fetch_from_url(url: str, title: str | None = None) -> dict:
         "link": url,
         "feed": "manual",
     }
+
+
+def pick_random_entry(feed_url: str, exclude_guids: set) -> tuple | None:
+    """Parse ``feed_url`` and return ``(feed, entry, metadata)`` for a random unused episode.
+
+    Filters out every entry whose GUID is in ``exclude_guids``, then picks one
+    at random from what remains. Returns ``None`` when every entry in the feed's
+    current RSS window has already been used — the caller should log and skip.
+    """
+    feed = _parse_feed(feed_url)
+    available = [e for e in feed.entries if _entry_guid(e) not in exclude_guids]
+    if not available:
+        logger.info(
+            "All %d entries in the RSS window are already used for this feed",
+            len(feed.entries),
+        )
+        return None
+    entry = random.choice(available)
+    logger.info(
+        "Random episode selected: %r (%d unused / %d total in RSS window)",
+        entry.get("title"), len(available), len(feed.entries),
+    )
+    return feed, entry, _entry_metadata(entry)
 
 
 def peek_latest(feed_url: str) -> dict:
