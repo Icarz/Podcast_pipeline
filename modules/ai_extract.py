@@ -177,7 +177,10 @@ SYSTEM_PROMPT = (
     "The clip MUST contain a full, self-contained idea WITH its payoff. NEVER cut "
     "off mid-sentence, and NEVER end on a setup/cliffhanger such as \"...this is "
     "what I want you to do\" or \"...here's the thing\" without the actual point "
-    "that follows. The last segment must deliver the resolution, not tee it up.\n"
+    "that follows. The last segment must deliver the resolution, not tee it up. "
+    "If a complete thought runs long, ANCHOR clip_end on its concluding/payoff "
+    "sentence and choose clip_start as LATE as needed to fit the length limit — "
+    "never drop the payoff to keep an earlier opening line.\n"
     '  "hashtags"    : array of strings — 3 to 8 relevant hashtags, each '
     'starting with "#".\n'
     '  "image_prompts": array of exactly 4 strings — cinematic visual '
@@ -325,7 +328,9 @@ SYSTEM_PROMPT = (
     "advice (setup AND payoff) over hitting a precise duration. If a complete "
     f"thought will not fit within {config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds, "
     "pick a SHORTER self-contained thought that does fit — do NOT exceed the "
-    "limit to capture a longer passage.\n\n"
+    "limit to capture a longer passage. When trimming to fit, trim from the "
+    "FRONT (start later) so the clip still ENDS on the payoff; never drop the "
+    "concluding sentence.\n\n"
     "The transcript is given as timestamped segments, one per line, formatted "
     "[start-end] text. Choose a contiguous run of segments that forms a "
     "self-contained, compelling moment, and set clip_start to that run's first "
@@ -576,20 +581,44 @@ def _ends_sentence(word: str) -> bool:
     return word.rstrip("\"')]}").endswith(_SENTENCE_END)
 
 
-def _trim_to_cap(data: dict, words: list) -> None:
-    """Shorten an over-long clip to a sentence boundary within the hard cap.
+def _sentence_open_starts(words: list) -> list[float]:
+    """Start times of sentence-opening words: the first word, plus any word whose
+    predecessor ends a sentence.
 
-    The model sometimes insists on a single complete thought that runs a few
-    seconds past ``CLIP_WINDOW_MAX_HARD_SECONDS`` (it is deterministic, so simply
-    re-asking returns the same pick). Rather than reject it, pull ``clip_end``
-    back to the LATEST sentence-ending word that still fits under the cap — keeping
-    the clip >= the min window when possible so it ends on a complete sentence
-    instead of mid-thought. No-op when the clip already fits.
+    Shared by :func:`_trim_to_cap` and :func:`_snap_to_sentences` so both agree on
+    what a "sentence start" is. ``_ends_sentence`` covers the closing side.
+    """
+    ws = [
+        w for w in words
+        if w.get("start") is not None and w.get("end") is not None and (w.get("word") or "").strip()
+    ]
+    if not ws:
+        return []
+    return [ws[0]["start"]] + [
+        ws[i]["start"] for i in range(1, len(ws)) if _ends_sentence(ws[i - 1]["word"])
+    ]
+
+
+def _trim_to_cap(data: dict, words: list) -> None:
+    """Shorten an over-long clip while PRESERVING its payoff.
+
+    The model is asked to end ``clip_end`` on the concluding/payoff sentence, so
+    when the chosen thought runs past ``CLIP_WINDOW_MAX_HARD_SECONDS`` we keep
+    ``clip_end`` FIXED and trim from the FRONT: push ``clip_start`` forward to the
+    earliest sentence-opening word that brings the window under the cap (and still
+    at/above the floor), keeping the most setup context the clip can while still
+    landing on the payoff.
+
+    Only in the rare case where the payoff sentence ALONE exceeds the cap (no
+    sentence-opening word lands late enough to fit) do we fall back to the old
+    behavior: pull ``clip_end`` back to the latest sentence boundary under the cap
+    (the payoff is sacrificed). No-op when the clip already fits.
     """
     cs, ce = data.get("clip_start"), data.get("clip_end")
     if not isinstance(cs, (int, float)) or not isinstance(ce, (int, float)):
         return
     cap = config.CLIP_WINDOW_MAX_HARD_SECONDS
+    floor = config.CLIP_WINDOW_MIN_SECONDS
     if ce - cs <= cap:
         return
 
@@ -597,12 +626,28 @@ def _trim_to_cap(data: dict, words: list) -> None:
         w for w in words
         if w.get("start") is not None and w.get("end") is not None and (w.get("word") or "").strip()
     ]
+
+    # Preferred: keep the payoff (clip_end) and push clip_start forward. A valid
+    # new start lands the window in [floor, cap] while still ending on clip_end:
+    #   new_start >= ce - cap   (window <= cap)
+    #   new_start <= ce - floor (window >= floor)
+    # Pick the EARLIEST opening word in that band -> the longest clip that fits.
+    band = [t for t in _sentence_open_starts(ws) if (ce - cap) <= t <= (ce - floor) and t > cs]
+    if band:
+        new_start = min(band)
+        logger.warning(
+            "Clip window %.1fs exceeds cap %ds; moved clip_start %.2f -> %.2f to "
+            "preserve payoff (now %.1fs)",
+            ce - cs, cap, cs, new_start, ce - new_start,
+        )
+        data["clip_start"] = new_start
+        return
+
+    # Fallback: the payoff sentence won't fit -> pull clip_end back to the latest
+    # sentence boundary under the cap (old behavior; payoff sacrificed).
     limit = cs + cap
-    floor = cs + config.CLIP_WINDOW_MIN_SECONDS
     sentence_ends = [w["end"] for w in ws if _ends_sentence(w["word"]) and cs < w["end"] <= limit]
-    # Prefer a sentence end at/above the min window; else the latest that fits;
-    # else any word end under the cap; else a hard cut at the cap.
-    in_band = [t for t in sentence_ends if t >= floor]
+    in_band = [t for t in sentence_ends if t >= cs + floor]
     if in_band:
         new_end = max(in_band)
     elif sentence_ends:
@@ -612,7 +657,8 @@ def _trim_to_cap(data: dict, words: list) -> None:
         new_end = max(word_ends) if word_ends else limit
 
     logger.warning(
-        "Clip window %.1fs exceeds cap %ds; trimming clip_end %.2f -> %.2f (now %.1fs)",
+        "Clip window %.1fs exceeds cap %ds and the payoff sentence won't fit; "
+        "trimmed clip_end %.2f -> %.2f (now %.1fs)",
         ce - cs, cap, ce, new_end, new_end - cs,
     )
     data["clip_end"] = new_end
@@ -691,9 +737,7 @@ def _snap_to_sentences(data: dict, words: list) -> None:
     # End times of words that close a sentence.
     end_times = [w["end"] for w in ws if _ends_sentence(w["word"])]
     # Start times of words that open a sentence (first word, or after a closer).
-    start_times = [ws[0]["start"]] + [
-        ws[i]["start"] for i in range(1, len(ws)) if _ends_sentence(ws[i - 1]["word"])
-    ]
+    start_times = _sentence_open_starts(ws)
     if not end_times or not start_times:
         return
 
