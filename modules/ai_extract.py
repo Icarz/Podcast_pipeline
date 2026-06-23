@@ -625,6 +625,90 @@ def _brand_gate(data: dict) -> None:
     )
 
 
+def _content_gate(data: dict, transcript: dict) -> None:
+    """Raise ValueError if the actual clip transcript is weak content.
+
+    The brand gate validates the AI's *written* hook/insights but never reads
+    the source audio.  This gate extracts the real transcript words in the clip
+    window and asks Haiku whether the segment delivers a payoff — rejecting
+    rambling, small talk, and segments that trail off without a landing.
+
+    Fails open on API errors (broken gate never blocks the pipeline).
+    """
+    if not config.CONTENT_GATE_ENABLED:
+        return
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return
+
+    words = transcript.get("words") if isinstance(transcript, dict) else None
+    if not words:
+        return
+
+    cs, ce = float(data["clip_start"]), float(data["clip_end"])
+    clip_words = [
+        w["word"] for w in words
+        if w.get("start") is not None
+        and cs - 0.5 <= w["start"] <= ce + 0.5
+        and (w.get("word") or "").strip()
+    ]
+    if not clip_words:
+        return
+
+    clip_text = " ".join(clip_words)
+
+    prompt = (
+        f"Clip hook: {data.get('hook', '')}\n"
+        f"Clip title: {data.get('title', '')}\n\n"
+        f"Below is the ACTUAL transcript of the selected clip segment "
+        f"({ce - cs:.0f} seconds of audio). Read it carefully.\n\n"
+        f"---\n{clip_text}\n---\n\n"
+        "Evaluate this transcript segment on FIVE criteria:\n"
+        "1. PAYOFF — Does the segment land on a clear insight, reframe, or "
+        "actionable takeaway that the VIEWER can use? (Not just build-up, "
+        "a story that trails off, or a point that never lands.)\n"
+        "2. DENSITY — Is the segment focused and tight, or is it padded with "
+        "filler, rambling anecdotes, 'um/uh', or repetitive small talk?\n"
+        "3. HOOK-MATCH — Does the actual spoken content deliver what the hook "
+        "and title promise?\n"
+        "4. UNIVERSALITY — The segment must speak to the VIEWER's life, not "
+        "the speaker's personal story. If the last 20% of the segment is the "
+        "speaker talking about themselves ('I did', 'my coaching', 'my "
+        "experience', 'when I was'), it fails. Brief personal examples that "
+        "serve a universal point are fine; self-promotion or extended "
+        "autobiography is not.\n"
+        "5. STRUCTURE — A good clip follows HOOK → IDEA → PAYOFF. The segment "
+        "must contain all three. A segment that is all build-up, all example, "
+        "or all diagnosis without a reframe/takeaway fails.\n\n"
+        "If ANY criterion clearly fails, respond 'NO: <one-sentence reason>'.\n"
+        "If all five pass, respond 'YES'.\n"
+        "Respond with ONLY 'YES' or 'NO: <reason>'."
+    )
+
+    try:
+        client = _client()
+        response = client.messages.create(
+            model=config.CONTENT_GATE_MODEL,
+            max_tokens=80,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        answer = (response.content[0].text or "").strip()
+        if answer.upper().startswith("YES"):
+            logger.info("Content gate PASSED | hook=%r", data.get("hook", ""))
+            return
+
+        logger.warning("Content gate FAILED: %s", answer)
+        raise ValueError(
+            f"CONTENT GATE — clip transcript rejected: {answer}. "
+            f"Segment ({cs:.1f}-{ce:.1f}s) did not deliver a payoff."
+        )
+    except ValueError:
+        raise
+    except Exception as exc:
+        logger.warning("Content gate error (failing open): %s", exc)
+
+
 _SENTENCE_END = (".", "!", "?")
 
 
@@ -882,6 +966,7 @@ def extract_highlights(transcript: dict) -> dict:
         _trim_to_cap(parsed, words)
     _validate(parsed)
     _brand_gate(parsed)
+    _content_gate(parsed, transcript)
 
     # Snap onto real sentence boundaries so the clip never cuts a word in half
     # and never opens/ends mid-thought, then re-extend/re-cap: snapping clip_start

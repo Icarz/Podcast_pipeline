@@ -154,6 +154,12 @@ PRESCREEN_ENABLED = True
 PRESCREEN_MODEL = "claude-haiku-4-5-20251001"
 PRESCREEN_MAX_ATTEMPTS = 3
 
+# Content gate: after extraction, send the actual clip transcript back to Haiku
+# to verify the segment delivers a payoff and isn't rambling/small talk.
+# Raises ValueError on fail so the retry wrapper re-extracts a different segment.
+CONTENT_GATE_ENABLED = True
+CONTENT_GATE_MODEL = "claude-haiku-4-5-20251001"
+
 # Posted-history log: which episodes have already been uploaded (keyed by RSS
 # GUID) so --auto never re-posts the same episode. Written ONLY after a
 # successful YouTube upload. See modules/posted_history.py.
