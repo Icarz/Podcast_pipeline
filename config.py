@@ -165,6 +165,7 @@ POSTED_HISTORY_PATH = os.path.join(TMP_DIR, "posted_history.json")
 # unbounded and eventually starve every query of fresh candidates.
 FOOTAGE_HISTORY_PATH = os.path.join(TMP_DIR, "footage_history.json")
 FOOTAGE_HISTORY_MAX = 300   # cap; evict oldest ids beyond this
+FOOTAGE_HISTORY_TTL_DAYS = 30  # entries older than this re-enter the pool
 
 # --- HTTP ---
 # Browser-like headers so feeds/CDNs that block default clients still respond.
