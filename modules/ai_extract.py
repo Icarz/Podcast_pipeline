@@ -8,7 +8,9 @@ import json
 import logging
 import os
 import re
+import time
 
+import anthropic
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
@@ -52,6 +54,19 @@ SYSTEM_PROMPT = (
     "check, pick the next best clip that passes both.\n"
     "4. TOPIC PRIORITY — when multiple clips pass the brand check, "
     "rank them in this order and pick the highest-ranked:\n"
+    "   DIGESTIBILITY FIRST (overrides all tiers): Before ranking by topic, apply "
+    "this filter — a complete stranger must grasp the core idea in under 3 seconds "
+    "with ZERO prior context. The viewer's reaction must be 'yes, that's me' — not "
+    "'interesting, let me think about that'. Concepts that require intellectual "
+    "assembly, specialist vocabulary, or explanation of the speaker's framework are "
+    "ALWAYS ranked below concepts that are immediately obvious once stated. "
+    "SIMPLE ≠ SHALLOW: 'Your brain rehearses fake scenarios to feel safe' is simple "
+    "AND deep. 'Anxiety and creativity are the same neural force' is interesting but "
+    "requires assembly — deprioritize it unless nothing simpler is available. "
+    "PROVEN DIGESTIBILITY PATTERN: the best performers ('Your Brain Is Addicted to "
+    "Fake Scenarios', 'Opt Out of Modern Culture', 'Always Grab the Right Handle') "
+    "all describe something the viewer is ALREADY doing or experiencing — they just "
+    "didn't have the frame for it yet.\n"
     "   TIER 1 (pick first): The speaker reveals a psychological, neurological, or "
     "systemic mechanism that is acting on the viewer WITHOUT their awareness — "
     "AND the clip includes or implies a path to self-awareness or agency. "
@@ -67,7 +82,8 @@ SYSTEM_PROMPT = (
     "   TIER 3: Self-knowledge or motivational insight grounded in a universal human truth.\n"
     "   AVOID: clips that only diagnose a trap without a path out; clips about a single "
     "behavioral problem with no self-awareness payoff; inspirational quotes without "
-    "a reveal; motivational pep-talk; anything that could headline a self-help listicle.\n"
+    "a reveal; motivational pep-talk; anything that could headline a self-help listicle; "
+    "clips where the insight requires knowing the speaker's theory/framework first.\n"
     "   TOPIC DIVERSITY: if the transcript's central topic is one you've likely used "
     "recently (e.g. overthinking, procrastination), search HARDER for a different "
     "angle in the same transcript — look for clips on identity, meaning, perspective, "
@@ -664,7 +680,7 @@ def _content_gate(data: dict, transcript: dict) -> None:
         f"Below is the ACTUAL transcript of the selected clip segment "
         f"({ce - cs:.0f} seconds of audio). Read it carefully.\n\n"
         f"---\n{clip_text}\n---\n\n"
-        "Evaluate this transcript segment on FIVE criteria:\n"
+        "Evaluate this transcript segment on SIX criteria:\n"
         "1. PAYOFF — Does the segment land on a clear insight, reframe, or "
         "actionable takeaway that the VIEWER can use? (Not just build-up, "
         "a story that trails off, or a point that never lands.)\n"
@@ -680,9 +696,18 @@ def _content_gate(data: dict, transcript: dict) -> None:
         "autobiography is not.\n"
         "5. STRUCTURE — A good clip follows HOOK → IDEA → PAYOFF. The segment "
         "must contain all three. A segment that is all build-up, all example, "
-        "or all diagnosis without a reframe/takeaway fails.\n\n"
+        "or all diagnosis without a reframe/takeaway fails.\n"
+        "6. DIGESTIBILITY — A complete stranger must be able to grasp the core "
+        "idea within 3 seconds with ZERO prior context. The viewer's reaction "
+        "must be 'yes, that's me' — not 'interesting, let me think about that'. "
+        "If the concept requires explanation, intellectual assembly, specialist "
+        "vocabulary, or prior knowledge of the speaker's framework to land, it "
+        "fails. Simple ≠ shallow: 'Your brain is wired to rehearse fake "
+        "scenarios' passes; 'anxiety and creativity share the same neural "
+        "substrate' fails (requires explanation). Reject clips where the hook "
+        "is intellectually interesting but not immediately obvious to anyone.\n\n"
         "If ANY criterion clearly fails, respond 'NO: <one-sentence reason>'.\n"
-        "If all five pass, respond 'YES'.\n"
+        "If all six pass, respond 'YES'.\n"
         "Respond with ONLY 'YES' or 'NO: <reason>'."
     )
 
@@ -987,6 +1012,9 @@ def extract_highlights(transcript: dict) -> dict:
     return parsed
 
 
+_RETRY_SLEEP_S = 65  # sleep between attempts to clear the 1-min rate-limit window
+
+
 def extract_highlights_with_retry(transcript: dict, attempts: int = 3) -> dict:
     """Call :func:`extract_highlights` up to ``attempts`` times, tolerating the
     model's non-deterministic output.
@@ -995,10 +1023,10 @@ def extract_highlights_with_retry(transcript: dict, attempts: int = 3) -> dict:
     count (e.g. 5 ``image_prompts`` instead of 4) or stray trailing data that trips
     ``_validate``/``json.loads`` (both raise ``ValueError``). Rather than die on the
     first throw, retry a few times — a later attempt almost always passes. Only
-    ``ValueError`` is caught (schema/parse variance); transport/API errors propagate
-    immediately. Re-raises the last ``ValueError`` after the final attempt fails.
+    ``ValueError`` and ``RateLimitError`` are caught; other transport/API errors
+    propagate immediately. Re-raises the last error after the final attempt fails.
     """
-    last_exc: ValueError | None = None
+    last_exc: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
             return extract_highlights(transcript)
@@ -1008,6 +1036,15 @@ def extract_highlights_with_retry(transcript: dict, attempts: int = 3) -> dict:
                 "extract_highlights attempt %d/%d failed (non-deterministic): %s",
                 attempt, attempts, exc,
             )
+        except anthropic.RateLimitError as exc:
+            last_exc = exc
+            logger.warning(
+                "extract_highlights attempt %d/%d hit rate limit: %s",
+                attempt, attempts, exc,
+            )
+        if attempt < attempts:
+            logger.info("Sleeping %ds before retry %d/%d …", _RETRY_SLEEP_S, attempt + 1, attempts)
+            time.sleep(_RETRY_SLEEP_S)
     assert last_exc is not None
     raise last_exc
 
