@@ -90,6 +90,10 @@ EPISODE_REJECT_KEYWORDS = [
     "celebrity", "actor", "actress", "movie", "film", "hollywood", "music industry",
     # Time-specific / news
     "covid", "pandemic", "coronavirus", "lockdown",
+    # Biohacking / substance-based performance (lifestyle tactics, not identity)
+    "biohacking", "biohack", "nootropic", "supplement stack", "cold plunge",
+    "cold shower", "ice bath", "intermittent fasting", "caffeine protocol",
+    "pre-workout", "energy drink", "sleep hack",
 ]
 
 # Episodes whose title OR description contains any of these words are scored

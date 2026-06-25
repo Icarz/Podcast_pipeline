@@ -490,7 +490,47 @@ if __name__ == "__main__":
             episode = rss_ingest.fetch_from_url(args.url, title=args.title)
             result = run("manual", episode=episode, privacy_status=args.privacy)
         else:
-            result = run(args.feed, privacy_status=args.privacy)
+            feed_url = config.PODCAST_FEEDS.get(args.feed, args.feed)
+            used_guids = set(posted_history.load().keys())
+            skipped_guids: set[str] = set()
+            result = None
+            for ep_attempt in range(1, _AUTO_MAX_EPISODE_ATTEMPTS + 1):
+                picked = rss_ingest.pick_random_entry(
+                    feed_url, exclude_guids=used_guids | skipped_guids,
+                )
+                if picked is None:
+                    raise RuntimeError(
+                        f"All episodes in the RSS window for '{args.feed}' have already been used. "
+                        "Delete tmp/posted_history.json to reset."
+                    )
+                feed_obj, entry, meta = picked
+                logger.info(
+                    "Episode attempt %d/%d: %r",
+                    ep_attempt, _AUTO_MAX_EPISODE_ATTEMPTS, meta.get("title"),
+                )
+                episode = rss_ingest.download_latest(feed_obj, entry)
+                try:
+                    result = run(args.feed, episode=episode, privacy_status=args.privacy)
+                    break
+                except ValueError as exc:
+                    if "CONTENT GATE" in str(exc) or "BRAND GATE" in str(exc):
+                        guid = meta.get("guid", "")
+                        logger.warning(
+                            "Episode %r failed quality gates after all retries, "
+                            "skipping to next episode: %s", meta.get("title"), exc,
+                        )
+                        if guid:
+                            skipped_guids.add(guid)
+                        cache_path = _plan_cache_path(episode["audio_path"])
+                        if os.path.exists(cache_path):
+                            os.remove(cache_path)
+                        continue
+                    raise
+            if result is None:
+                raise RuntimeError(
+                    f"Exhausted {_AUTO_MAX_EPISODE_ATTEMPTS} episode attempts for '{args.feed}'; "
+                    "no episode passed quality gates."
+                )
     except Exception:
         # Log the full traceback (the preceding "[n/7]" line shows which step
         # was running) and exit non-zero so genuine pipeline failures never pass
