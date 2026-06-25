@@ -298,6 +298,9 @@ def run(feed_arg: str, episode: dict | None = None, privacy_status: str = "priva
     }
 
 
+_AUTO_MAX_EPISODE_ATTEMPTS = 3
+
+
 def run_auto(privacy_status: str = "private") -> dict | None:
     """Rotation entry point: pick today's feed and process a random unused episode.
 
@@ -307,6 +310,10 @@ def run_auto(privacy_status: str = "private") -> dict | None:
       * all RSS entries already used -> log and return None,
       * otherwise                   -> pick a random unused episode and run the
                                        full pipeline via :func:`run`.
+
+    If the content gate rejects every extraction attempt for an episode (all 3
+    retries fail), the episode is skipped and another is tried — up to
+    ``_AUTO_MAX_EPISODE_ATTEMPTS`` episodes before giving up.
 
     Episodes are retired at render time (not post time), so a YouTube failure
     never leaves an episode re-eligible for selection next run.
@@ -321,24 +328,54 @@ def run_auto(privacy_status: str = "private") -> dict | None:
     logger.info("Auto mode: %s -> feed '%s' (random episode)", _WEEKDAY_NAMES[weekday], feed_key)
 
     used_guids = set(posted_history.load().keys())
+    skipped_guids: set[str] = set()
 
-    try:
-        picked = rss_ingest.pick_random_entry(feed_url, exclude_guids=used_guids)
-    except Exception as exc:  # noqa: BLE001 - feed problems must not break scheduling
-        logger.warning("Auto mode: feed '%s' unavailable (%s); exiting cleanly", feed_key, exc)
-        return None
+    for ep_attempt in range(1, _AUTO_MAX_EPISODE_ATTEMPTS + 1):
+        try:
+            picked = rss_ingest.pick_random_entry(
+                feed_url, exclude_guids=used_guids | skipped_guids,
+            )
+        except Exception as exc:  # noqa: BLE001 - feed problems must not break scheduling
+            logger.warning("Auto mode: feed '%s' unavailable (%s); exiting cleanly", feed_key, exc)
+            return None
 
-    if picked is None:
+        if picked is None:
+            logger.info(
+                "Auto mode: all episodes in '%s' RSS window already used; nothing to do",
+                feed_key,
+            )
+            return None
+
+        feed, entry, meta = picked
+        guid = meta.get("guid", "")
         logger.info(
-            "Auto mode: all episodes in '%s' RSS window already used; nothing to do",
-            feed_key,
+            "Auto mode: episode attempt %d/%d: %r (guid=%s)",
+            ep_attempt, _AUTO_MAX_EPISODE_ATTEMPTS, meta.get("title"), guid,
         )
-        return None
+        episode = rss_ingest.download_latest(feed, entry)
 
-    feed, entry, meta = picked
-    logger.info("Auto mode: episode selected: %r (guid=%s)", meta.get("title"), meta.get("guid"))
-    episode = rss_ingest.download_latest(feed, entry)
-    return run(feed_key, episode=episode, privacy_status=privacy_status)
+        try:
+            return run(feed_key, episode=episode, privacy_status=privacy_status)
+        except ValueError as exc:
+            if "CONTENT GATE" in str(exc) or "BRAND GATE" in str(exc):
+                logger.warning(
+                    "Auto mode: episode %r failed quality gates after all retries, "
+                    "skipping to next episode: %s", meta.get("title"), exc,
+                )
+                if guid:
+                    skipped_guids.add(guid)
+                # Clean up stale plan cache so it doesn't block future runs
+                cache_path = _plan_cache_path(episode["audio_path"])
+                if os.path.exists(cache_path):
+                    os.remove(cache_path)
+                continue
+            raise
+
+    logger.warning(
+        "Auto mode: exhausted %d episode attempts for '%s'; no episode passed quality gates",
+        _AUTO_MAX_EPISODE_ATTEMPTS, feed_key,
+    )
+    return None
 
 
 def _print_summary(result: dict) -> None:
@@ -453,7 +490,47 @@ if __name__ == "__main__":
             episode = rss_ingest.fetch_from_url(args.url, title=args.title)
             result = run("manual", episode=episode, privacy_status=args.privacy)
         else:
-            result = run(args.feed, privacy_status=args.privacy)
+            feed_url = config.PODCAST_FEEDS.get(args.feed, args.feed)
+            used_guids = set(posted_history.load().keys())
+            skipped_guids: set[str] = set()
+            result = None
+            for ep_attempt in range(1, _AUTO_MAX_EPISODE_ATTEMPTS + 1):
+                picked = rss_ingest.pick_random_entry(
+                    feed_url, exclude_guids=used_guids | skipped_guids,
+                )
+                if picked is None:
+                    raise RuntimeError(
+                        f"All episodes in the RSS window for '{args.feed}' have already been used. "
+                        "Delete tmp/posted_history.json to reset."
+                    )
+                feed_obj, entry, meta = picked
+                logger.info(
+                    "Episode attempt %d/%d: %r",
+                    ep_attempt, _AUTO_MAX_EPISODE_ATTEMPTS, meta.get("title"),
+                )
+                episode = rss_ingest.download_latest(feed_obj, entry)
+                try:
+                    result = run(args.feed, episode=episode, privacy_status=args.privacy)
+                    break
+                except ValueError as exc:
+                    if "CONTENT GATE" in str(exc) or "BRAND GATE" in str(exc):
+                        guid = meta.get("guid", "")
+                        logger.warning(
+                            "Episode %r failed quality gates after all retries, "
+                            "skipping to next episode: %s", meta.get("title"), exc,
+                        )
+                        if guid:
+                            skipped_guids.add(guid)
+                        cache_path = _plan_cache_path(episode["audio_path"])
+                        if os.path.exists(cache_path):
+                            os.remove(cache_path)
+                        continue
+                    raise
+            if result is None:
+                raise RuntimeError(
+                    f"Exhausted {_AUTO_MAX_EPISODE_ATTEMPTS} episode attempts for '{args.feed}'; "
+                    "no episode passed quality gates."
+                )
     except Exception:
         # Log the full traceback (the preceding "[n/7]" line shows which step
         # was running) and exit non-zero so genuine pipeline failures never pass

@@ -23,9 +23,10 @@ LOG_FILE = os.path.join(LOGS_DIR, "pipeline.log")
 # ROTATION PHILOSOPHY: prefer solo-speaker / monologue-format shows. Interview
 # podcasts produce two-voice clips that perform poorly as Shorts.
 PODCAST_FEEDS = {
-    # On Purpose — Jay Shetty (Omny)                 https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/32f1779e-bc01-4d36-89e6-afcb01070c82/e0c8382f-48d4-42bb-89d5-afcb01075cb4/podcast.rss
-    # Solo + interview mix; solo eps are pure monologue. Brand: identity/mindset.
-    "jay_shetty":     "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/32f1779e-bc01-4d36-89e6-afcb01070c82/e0c8382f-48d4-42bb-89d5-afcb01075cb4/podcast.rss",
+    # Huberman Lab — Andrew Huberman (Megaphone)     https://feeds.megaphone.fm/hubermanlab
+    # Solo deep-dives on neuroscience/behavior (1-3 hrs). Highest single-speaker
+    # density; episodes are rich in 45-58s monologue segments. Brand: neurology/focus/behavior.
+    "huberman_lab":   "https://feeds.megaphone.fm/hubermanlab",
     # The Mel Robbins Podcast (Simplecast)            https://feeds.simplecast.com/UCwaTX1J
     # Solo motivational; consistently single-speaker. Brand: identity/resilience.
     "mel_robbins":    "https://feeds.simplecast.com/UCwaTX1J",
@@ -41,10 +42,10 @@ PODCAST_FEEDS = {
     # Solo monologue. Brand: neuroscience/behavior/identity.
     "mindset_mentor": "https://feeds.simplecast.com/rpKQEwel",
     # --- manual-run only (not in rotation) ---
+    # On Purpose — Jay Shetty (interview format; 2-speaker risk like Modern Wisdom)
+    "jay_shetty":     "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/32f1779e-bc01-4d36-89e6-afcb01070c82/e0c8382f-48d4-42bb-89d5-afcb01075cb4/podcast.rss",
     # Modern Wisdom — Chris Williamson (interview format; 2-speaker risk)
     "modern_wisdom":  "https://feeds.megaphone.fm/modernwisdom",
-    # Huberman Lab — Andrew Huberman (Megaphone)     https://feeds.megaphone.fm/hubermanlab
-    "huberman_lab":   "https://feeds.megaphone.fm/hubermanlab",
     # Jocko Podcast — Jocko Willink (RedCircle)
     "jocko_podcast":  "https://feeds.redcircle.com/64a89f88-a245-4098-8d8d-496325ec4f74",
     # SOLVED with Mark Manson (monthly)
@@ -59,7 +60,7 @@ DEFAULT_FEED = "mindset_mentor"
 # date.weekday() is Mon=0, Tue=1, ..., Sun=6. Any weekday NOT listed is a
 # non-posting day: --auto logs "no posting day today" and exits 0.
 ROTATION = {
-    0: "jay_shetty",       # Monday
+    0: "huberman_lab",     # Monday
     1: "mel_robbins",      # Tuesday
     2: "jordan_peterson",  # Wednesday
     4: "daily_stoic",      # Friday
@@ -89,6 +90,10 @@ EPISODE_REJECT_KEYWORDS = [
     "celebrity", "actor", "actress", "movie", "film", "hollywood", "music industry",
     # Time-specific / news
     "covid", "pandemic", "coronavirus", "lockdown",
+    # Biohacking / substance-based performance (lifestyle tactics, not identity)
+    "biohacking", "biohack", "nootropic", "supplement stack", "cold plunge",
+    "cold shower", "ice bath", "intermittent fasting", "caffeine protocol",
+    "pre-workout", "energy drink", "sleep hack",
 ]
 
 # Episodes whose title OR description contains any of these words are scored
@@ -153,6 +158,12 @@ PRESCREEN_ENABLED = True
 PRESCREEN_MODEL = "claude-haiku-4-5-20251001"
 PRESCREEN_MAX_ATTEMPTS = 3
 
+# Content gate: after extraction, send the actual clip transcript back to Haiku
+# to verify the segment delivers a payoff and isn't rambling/small talk.
+# Raises ValueError on fail so the retry wrapper re-extracts a different segment.
+CONTENT_GATE_ENABLED = True
+CONTENT_GATE_MODEL = "claude-haiku-4-5-20251001"
+
 # Posted-history log: which episodes have already been uploaded (keyed by RSS
 # GUID) so --auto never re-posts the same episode. Written ONLY after a
 # successful YouTube upload. See modules/posted_history.py.
@@ -164,6 +175,7 @@ POSTED_HISTORY_PATH = os.path.join(TMP_DIR, "posted_history.json")
 # unbounded and eventually starve every query of fresh candidates.
 FOOTAGE_HISTORY_PATH = os.path.join(TMP_DIR, "footage_history.json")
 FOOTAGE_HISTORY_MAX = 300   # cap; evict oldest ids beyond this
+FOOTAGE_HISTORY_TTL_DAYS = 30  # entries older than this re-enter the pool
 
 # --- HTTP ---
 # Browser-like headers so feeds/CDNs that block default clients still respond.
@@ -194,7 +206,7 @@ EXTRACT_MAX_TOKENS = 2000
 # Capped at 58s so the finished Short stays UNDER 60s — YouTube blocks the
 # Pixabay music bed on Shorts that are 60s or longer, so we keep a 2s safety
 # margin under that threshold.
-CLIP_WINDOW_MIN_SECONDS = 25
+CLIP_WINDOW_MIN_SECONDS = 45
 CLIP_WINDOW_MAX_SECONDS = 58
 # Hard upper bound enforced by ai_extract._validate(). It must also sit at/below
 # 58s (not just the soft target) — validation checks against THIS value, and

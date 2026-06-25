@@ -8,7 +8,9 @@ import json
 import logging
 import os
 import re
+import time
 
+import anthropic
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
@@ -52,6 +54,19 @@ SYSTEM_PROMPT = (
     "check, pick the next best clip that passes both.\n"
     "4. TOPIC PRIORITY — when multiple clips pass the brand check, "
     "rank them in this order and pick the highest-ranked:\n"
+    "   DIGESTIBILITY FIRST (overrides all tiers): Before ranking by topic, apply "
+    "this filter — a complete stranger must grasp the core idea in under 3 seconds "
+    "with ZERO prior context. The viewer's reaction must be 'yes, that's me' — not "
+    "'interesting, let me think about that'. Concepts that require intellectual "
+    "assembly, specialist vocabulary, or explanation of the speaker's framework are "
+    "ALWAYS ranked below concepts that are immediately obvious once stated. "
+    "SIMPLE ≠ SHALLOW: 'Your brain rehearses fake scenarios to feel safe' is simple "
+    "AND deep. 'Anxiety and creativity are the same neural force' is interesting but "
+    "requires assembly — deprioritize it unless nothing simpler is available. "
+    "PROVEN DIGESTIBILITY PATTERN: the best performers ('Your Brain Is Addicted to "
+    "Fake Scenarios', 'Opt Out of Modern Culture', 'Always Grab the Right Handle') "
+    "all describe something the viewer is ALREADY doing or experiencing — they just "
+    "didn't have the frame for it yet.\n"
     "   TIER 1 (pick first): The speaker reveals a psychological, neurological, or "
     "systemic mechanism that is acting on the viewer WITHOUT their awareness — "
     "AND the clip includes or implies a path to self-awareness or agency. "
@@ -67,7 +82,13 @@ SYSTEM_PROMPT = (
     "   TIER 3: Self-knowledge or motivational insight grounded in a universal human truth.\n"
     "   AVOID: clips that only diagnose a trap without a path out; clips about a single "
     "behavioral problem with no self-awareness payoff; inspirational quotes without "
-    "a reveal; motivational pep-talk; anything that could headline a self-help listicle.\n"
+    "a reveal; motivational pep-talk; anything that could headline a self-help listicle; "
+    "clips where the insight requires knowing the speaker's theory/framework first.\n"
+    "   NEVER select a clip where the primary mechanism or core advice is substance-based "
+    "or consumption-based: caffeine, coffee, energy drinks, supplements, nootropics, "
+    "cold showers/plunges, sleep hacks, or any biohacking tactic. These produce "
+    "lifestyle-hack content, not identity transformation. If the hook would make "
+    "someone think of a coffee mug or a pill bottle, reject it.\n"
     "   TOPIC DIVERSITY: if the transcript's central topic is one you've likely used "
     "recently (e.g. overthinking, procrastination), search HARDER for a different "
     "angle in the same transcript — look for clips on identity, meaning, perspective, "
@@ -177,7 +198,10 @@ SYSTEM_PROMPT = (
     "The clip MUST contain a full, self-contained idea WITH its payoff. NEVER cut "
     "off mid-sentence, and NEVER end on a setup/cliffhanger such as \"...this is "
     "what I want you to do\" or \"...here's the thing\" without the actual point "
-    "that follows. The last segment must deliver the resolution, not tee it up.\n"
+    "that follows. The last segment must deliver the resolution, not tee it up. "
+    "If a complete thought runs long, ANCHOR clip_end on its concluding/payoff "
+    "sentence and choose clip_start as LATE as needed to fit the length limit — "
+    "never drop the payoff to keep an earlier opening line.\n"
     '  "hashtags"    : array of strings — 3 to 8 relevant hashtags, each '
     'starting with "#".\n'
     '  "image_prompts": array of exactly 4 strings — cinematic visual '
@@ -210,22 +234,31 @@ SYSTEM_PROMPT = (
     "vice or unhealthy behavior.\n"
     "  - Readable signage, graffiti, books with legible text, flipcharts, "
     "screens displaying words, or any on-screen text that a viewer can read.\n"
-    "  - Crowds, stadiums, conferences, presentations to audiences, or any "
-    "group/event setting.\n"
+    "  - Stadiums, conferences, presentations to audiences, or any organized "
+    "group/event setting. A person walking through a naturally busy street or "
+    "public space is fine — the subject must remain a SINGLE identifiable figure "
+    "among anonymous passersby, never a crowd scene where no individual stands out.\n"
     "  - Faces of identifiable people (close-up portraits where the person is "
     "the subject).\n"
     "  - Person lying in bed, or intimate/sensual positioning.\n"
-    "  - Traffic, cars, busy intersections, or urban infrastructure.\n"
-    "  - Flowers, food styling, or Pinterest-aesthetic flat-lay arrangements.\n\n"
+    "  - Traffic, cars, busy intersections, or stationary urban infrastructure "
+    "(power lines, construction, parking lots). Walking/running THROUGH a city is "
+    "allowed — the person must be the subject, not the infrastructure.\n"
+    "  - Flowers, food styling, or Pinterest-aesthetic flat-lay arrangements.\n"
+    "  - Coffee cups, mugs, energy drinks, supplement bottles, pills, or any food "
+    "or drink being prepared, held, or consumed. No kitchen scenes, no café "
+    "counter shots, no hands wrapped around a mug.\n\n"
     "SEARCH_QUERIES — exactly 5 Pexels PHOTO search queries, one per slide IN "
-    "ORDER:\n"
-    "  [0] cover — visual that matches the hook's energy and stakes.\n"
-    "  [1] insight 1 — matches the specific EMOTIONAL STATE of that insight, NOT "
-    "its topic. Ask: what would a person FEEL in this moment? Find a scene where a "
-    "real human is in that state.\n"
-    "  [2] insight 2 — same rule: emotion first, then scene.\n"
+    "ORDER. Each photo must ILLUSTRATE its slide's specific message — the viewer "
+    "should feel the connection between the words on the slide and the image "
+    "behind them:\n"
+    "  [0] cover — visual that matches the hook's energy and stakes. Must convey "
+    "the hook's CONCEPT, not just be dramatic.\n"
+    "  [1] insight 1 — scene that ILLUSTRATES this specific insight. Ask: what "
+    "real-world scene IS this insight? A person in what situation, doing what?\n"
+    "  [2] insight 2 — same rule: find the scene that makes this insight VISIBLE.\n"
     "  [3] insight 3 — same rule.\n"
-    "  [4] quote — evokes the tone and stakes of the quote itself.\n"
+    "  [4] quote — a scene that embodies what the quote SAYS, not just its mood.\n"
     "COVER SLIDE PRIORITY: search_queries[0] is the MOST IMPORTANT — it becomes "
     "the Instagram grid thumbnail. It MUST be visually dramatic at 1:1 crop: high "
     "contrast, clear subject, no busy detail. Default to TIER 1 scenes (lone figure "
@@ -234,8 +267,9 @@ SYSTEM_PROMPT = (
     "interior by 14x on Instagram grid — bias the cover hard toward TIER 1.\n"
     "Rules for every query:\n"
     "  - Describe a REAL SCENE a stock photographer actually shot (person walking "
-    "foggy path, man looking at city from rooftop, runner at dawn, hands writing "
-    "in notebook — specific and physical).\n"
+    "foggy path, man looking at city from rooftop, runner at dawn, figure walking "
+    "beach shoreline, person walking through city crowd, musician playing guitar "
+    "warm light, hands writing in notebook — specific and physical).\n"
     "  - Do NOT use abstract concepts as queries (no \"success\", \"ambition\", "
     "\"clarity\", \"mindset\" — these return generic stock photos).\n"
     "  - 2-4 words max, portrait-friendly composition preferred.\n"
@@ -246,7 +280,11 @@ SYSTEM_PROMPT = (
     "two hard requirements as rule 8: APPEND the palette's lighting treatment "
     "word to EVERY query, and NEVER pick a scene whose real-world light fights the "
     "palette (no fog/overcast/night/dusk under a warm palette, etc.).\n\n"
-    "VIDEO_QUERIES — you are a FILM EDITOR choosing B-roll for the chosen clip. "
+    "VIDEO_QUERIES — you are a DOCUMENTARY FILM EDITOR choosing B-roll that "
+    "ILLUSTRATES what the speaker is saying. Every shot must visually reinforce "
+    "the specific idea spoken in that quarter of the clip — the footage IS the "
+    "storytelling, not decoration. A viewer watching on mute should be able to "
+    "GUESS the topic from the footage alone.\n"
     "Produce EXACTLY 5 beats: 4 primary beats that map IN ORDER to the 4 quarters "
     "of the clip window, PLUS a 5th SPARE backup (distinct scene, same tone) used "
     "only if a primary clip can't be sourced.\n\n"
@@ -260,12 +298,23 @@ SYSTEM_PROMPT = (
     "contemplation/reading/writing content.\n"
     "State your chosen palette in your reasoning before writing queries.\n\n"
     "SCENE PRIORITY (ranked by proven performance):\n"
-    "TIER 1 — USE THESE BY DEFAULT:\n"
+    "TIER 1 — USE THESE BY DEFAULT (highest performing):\n"
     "  - Lone figure walking away on a dramatic path (mountain, forest, snow, fog)\n"
     "  - Silhouette against vast sky at sunrise/sunset\n"
     "  - Person standing at the edge of something vast (cliff, ocean, rooftop)\n"
     "  - Figure walking through morning mist or rain\n"
+    "  - Person walking alone on an empty beach at golden hour (from behind)\n"
+    "  - Runner on a coastal path or open road at dawn (from behind, not face)\n"
     "TIER 2 — USE WHEN TIER 1 DOESN'T FIT:\n"
+    "  - Person walking purposefully through a city street (from behind, urban "
+    "energy, the figure is the subject — not the buildings)\n"
+    "  - Runner moving through city streets at dawn or dusk (motion blur, "
+    "cinematic, from behind)\n"
+    "  - Figure walking through a bustling public space (market, plaza, train "
+    "station) — one clear subject among anonymous passersby\n"
+    "  - Person playing acoustic guitar or piano in a quiet space (hands/instrument "
+    "focus, warm light, no face)\n"
+    "  - Musician silhouette with instrument against window light or stage backlight\n"
     "  - Hands writing in a journal in warm light\n"
     "  - Person reading by a window with natural light\n"
     "  - Runner on a forest trail or mountain path (from behind, not face)\n"
@@ -275,10 +324,34 @@ SYSTEM_PROMPT = (
     "  - Flat-lay arrangements\n"
     "  - Any interior that reads as 'lifestyle blog'\n\n"
     "RULES:\n"
-    "1. Each query MUST describe a concrete, filmable human scene. Prefer TIER 1 "
-    "or TIER 2 scenes above. Map each beat to what's actually being discussed in "
-    "that quarter of the clip — the scene subject comes from the content, the "
-    "mood/lighting comes from the chosen palette.\n"
+    "1. CONTENT-FIRST MATCHING (THIS IS THE MOST IMPORTANT RULE): Each beat MUST "
+    "visually illustrate the SPECIFIC idea spoken in that quarter of the clip. "
+    "Read what the speaker says in each quarter, then find a filmable scene that "
+    "MEANS THE SAME THING visually. The scene subject comes from the content; "
+    "the mood/lighting comes from the chosen palette.\n"
+    "   BAD (generic pretty footage, no connection to words):\n"
+    "     Speaker says 'suppressing yourself' → 'sunset wheat field golden hour' "
+    "(decorative, says nothing about suppression)\n"
+    "     Speaker says 'your brain creates fake scenarios' → 'mountain lake mist' "
+    "(pretty but unrelated to the brain/scenarios concept)\n"
+    "     Speaker says 'break free from the pattern' → 'cliff edge silhouette' "
+    "(generic dramatic, doesn't show breaking free)\n"
+    "   GOOD (footage ILLUSTRATES the words):\n"
+    "     Speaker says 'suppressing yourself' → 'person walking away open door light' "
+    "(stepping OUT of confinement into openness = aspirational counterpart)\n"
+    "     Speaker says 'your brain creates fake scenarios' → 'figure standing still "
+    "crowd rushing past' (the stillness vs chaos = being trapped in your head)\n"
+    "     Speaker says 'break free from the pattern' → 'runner bursting through "
+    "city street dawn' (physical forward motion = breaking free)\n"
+    "     Speaker says 'you have to plant the right seeds' → 'hands in garden soil "
+    "golden hour' (literal visual metaphor for planting/growth)\n"
+    "     Speaker says 'stand in your truth' → 'lone figure mountain summit sunrise' "
+    "(standing tall, exposed, unafraid = owning your truth)\n"
+    "   Ask yourself for EACH beat: 'If I showed this footage with no audio, would "
+    "a viewer understand the concept?' If not, pick a more specific scene.\n"
+    "   Prefer TIER 1 or TIER 2 scenes, but the content match ALWAYS wins over "
+    "tier preference — a TIER 2 city scene that perfectly matches the words beats "
+    "a TIER 1 mountain that's just pretty.\n"
     '2. Do NOT use proper nouns, brand names, or place names. Generic settings are '
     "fine (a cliff, a forest trail, a rooftop, a river at dawn).\n"
     "3. TONAL CONSISTENCY: All 4 primary beats + the spare must share the chosen "
@@ -300,16 +373,23 @@ SYSTEM_PROMPT = (
     "NEVER negative keywords (overwhelm, fear, anxiety, defeat, exhaustion). "
     "Use the counterpart: clarity, momentum, stillness, resolve, conviction.\n"
     "8. SAFE-SCENE FALLBACK: For abstract concepts (neuroplasticity, identity, "
-    "meaning) with no filmable scene, use: lone runner on a forest path, hands "
-    "writing in a notebook, figure in morning mist, sunrise from a high vantage, "
-    "slow aerial over mountains or coast. Pick the closest in mood.\n"
+    "meaning) with no filmable scene, use: lone runner on a forest path, person "
+    "walking on an empty beach, figure in morning mist, person walking through "
+    "city streets at golden hour, hands writing in a notebook, sunrise from a "
+    "high vantage, slow aerial over mountains or coast. Pick the closest in mood.\n"
     '9. Format: {"keyword": "one emotion word", "query": "filmable scene treatment"}\n'
-    "Example (DRAMATIC-NATURAL palette — all beats at dawn/golden hour):\n"
-    '[{"keyword": "resolve", "query": "lone figure mountain trail golden hour"}, '
-    '{"keyword": "freedom", "query": "silhouette cliff edge sunset"}, '
-    '{"keyword": "momentum", "query": "runner forest path dawn light"}, '
-    '{"keyword": "stillness", "query": "person rooftop city sunrise"}, '
-    '{"keyword": "clarity", "query": "figure walking mist forest morning"}]\n\n'
+    "Example — clip about 'stop letting fear decide your life':\n"
+    "  Q1 (fear controls you) → scene of being stuck; "
+    "Q2 (you don't even notice) → sleepwalking through life; "
+    "Q3 (choose courage) → breaking forward; "
+    "Q4 (freedom on the other side) → expansive release.\n"
+    "DRAMATIC-NATURAL palette:\n"
+    '[{"keyword": "trapped", "query": "figure standing still city crowd golden hour"}, '
+    '{"keyword": "awakening", "query": "person looking up from bench sunrise"}, '
+    '{"keyword": "courage", "query": "runner bursting through empty street dawn"}, '
+    '{"keyword": "freedom", "query": "person arms open cliff edge sunset"}, '
+    '{"keyword": "resolve", "query": "lone figure walking beach golden hour"}]\n'
+    "Notice: each beat MATCHES its quarter's idea, not just a random pretty scene.\n\n"
     "Clip length: The clip window (clip_end - clip_start) MUST be at least "
     f"{config.CLIP_WINDOW_MIN_SECONDS} seconds and MUST NOT exceed "
     f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds — both are hard limits, not "
@@ -325,7 +405,9 @@ SYSTEM_PROMPT = (
     "advice (setup AND payoff) over hitting a precise duration. If a complete "
     f"thought will not fit within {config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds, "
     "pick a SHORTER self-contained thought that does fit — do NOT exceed the "
-    "limit to capture a longer passage.\n\n"
+    "limit to capture a longer passage. When trimming to fit, trim from the "
+    "FRONT (start later) so the clip still ENDS on the payoff; never drop the "
+    "concluding sentence.\n\n"
     "The transcript is given as timestamped segments, one per line, formatted "
     "[start-end] text. Choose a contiguous run of segments that forms a "
     "self-contained, compelling moment, and set clip_start to that run's first "
@@ -567,6 +649,99 @@ def _brand_gate(data: dict) -> None:
     )
 
 
+def _content_gate(data: dict, transcript: dict) -> None:
+    """Raise ValueError if the actual clip transcript is weak content.
+
+    The brand gate validates the AI's *written* hook/insights but never reads
+    the source audio.  This gate extracts the real transcript words in the clip
+    window and asks Haiku whether the segment delivers a payoff — rejecting
+    rambling, small talk, and segments that trail off without a landing.
+
+    Fails open on API errors (broken gate never blocks the pipeline).
+    """
+    if not config.CONTENT_GATE_ENABLED:
+        return
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return
+
+    words = transcript.get("words") if isinstance(transcript, dict) else None
+    if not words:
+        return
+
+    cs, ce = float(data["clip_start"]), float(data["clip_end"])
+    clip_words = [
+        w["word"] for w in words
+        if w.get("start") is not None
+        and cs - 0.5 <= w["start"] <= ce + 0.5
+        and (w.get("word") or "").strip()
+    ]
+    if not clip_words:
+        return
+
+    clip_text = " ".join(clip_words)
+
+    prompt = (
+        f"Clip hook: {data.get('hook', '')}\n"
+        f"Clip title: {data.get('title', '')}\n\n"
+        f"Below is the ACTUAL transcript of the selected clip segment "
+        f"({ce - cs:.0f} seconds of audio). Read it carefully.\n\n"
+        f"---\n{clip_text}\n---\n\n"
+        "Evaluate this transcript segment on SIX criteria:\n"
+        "1. PAYOFF — Does the segment land on a clear insight, reframe, or "
+        "actionable takeaway that the VIEWER can use? (Not just build-up, "
+        "a story that trails off, or a point that never lands.)\n"
+        "2. DENSITY — Is the segment focused and tight, or is it padded with "
+        "filler, rambling anecdotes, 'um/uh', or repetitive small talk?\n"
+        "3. HOOK-MATCH — Does the actual spoken content deliver what the hook "
+        "and title promise?\n"
+        "4. UNIVERSALITY — The segment must speak to the VIEWER's life, not "
+        "the speaker's personal story. If the last 20% of the segment is the "
+        "speaker talking about themselves ('I did', 'my coaching', 'my "
+        "experience', 'when I was'), it fails. Brief personal examples that "
+        "serve a universal point are fine; self-promotion or extended "
+        "autobiography is not.\n"
+        "5. STRUCTURE — A good clip follows HOOK → IDEA → PAYOFF. The segment "
+        "must contain all three. A segment that is all build-up, all example, "
+        "or all diagnosis without a reframe/takeaway fails.\n"
+        "6. DIGESTIBILITY — A complete stranger must be able to grasp the core "
+        "idea within 3 seconds with ZERO prior context. The viewer's reaction "
+        "must be 'yes, that's me' — not 'interesting, let me think about that'. "
+        "If the concept requires explanation, intellectual assembly, specialist "
+        "vocabulary, or prior knowledge of the speaker's framework to land, it "
+        "fails. Simple ≠ shallow: 'Your brain is wired to rehearse fake "
+        "scenarios' passes; 'anxiety and creativity share the same neural "
+        "substrate' fails (requires explanation). Reject clips where the hook "
+        "is intellectually interesting but not immediately obvious to anyone.\n\n"
+        "If ANY criterion clearly fails, respond 'NO: <one-sentence reason>'.\n"
+        "If all six pass, respond 'YES'.\n"
+        "Respond with ONLY 'YES' or 'NO: <reason>'."
+    )
+
+    try:
+        client = _client()
+        response = client.messages.create(
+            model=config.CONTENT_GATE_MODEL,
+            max_tokens=80,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        answer = (response.content[0].text or "").strip()
+        if answer.upper().startswith("YES"):
+            logger.info("Content gate PASSED | hook=%r", data.get("hook", ""))
+            return
+
+        logger.warning("Content gate FAILED: %s", answer)
+        raise ValueError(
+            f"CONTENT GATE — clip transcript rejected: {answer}. "
+            f"Segment ({cs:.1f}-{ce:.1f}s) did not deliver a payoff."
+        )
+    except ValueError:
+        raise
+    except Exception as exc:
+        logger.warning("Content gate error (failing open): %s", exc)
+
+
 _SENTENCE_END = (".", "!", "?")
 
 
@@ -576,20 +751,44 @@ def _ends_sentence(word: str) -> bool:
     return word.rstrip("\"')]}").endswith(_SENTENCE_END)
 
 
-def _trim_to_cap(data: dict, words: list) -> None:
-    """Shorten an over-long clip to a sentence boundary within the hard cap.
+def _sentence_open_starts(words: list) -> list[float]:
+    """Start times of sentence-opening words: the first word, plus any word whose
+    predecessor ends a sentence.
 
-    The model sometimes insists on a single complete thought that runs a few
-    seconds past ``CLIP_WINDOW_MAX_HARD_SECONDS`` (it is deterministic, so simply
-    re-asking returns the same pick). Rather than reject it, pull ``clip_end``
-    back to the LATEST sentence-ending word that still fits under the cap — keeping
-    the clip >= the min window when possible so it ends on a complete sentence
-    instead of mid-thought. No-op when the clip already fits.
+    Shared by :func:`_trim_to_cap` and :func:`_snap_to_sentences` so both agree on
+    what a "sentence start" is. ``_ends_sentence`` covers the closing side.
+    """
+    ws = [
+        w for w in words
+        if w.get("start") is not None and w.get("end") is not None and (w.get("word") or "").strip()
+    ]
+    if not ws:
+        return []
+    return [ws[0]["start"]] + [
+        ws[i]["start"] for i in range(1, len(ws)) if _ends_sentence(ws[i - 1]["word"])
+    ]
+
+
+def _trim_to_cap(data: dict, words: list) -> None:
+    """Shorten an over-long clip while PRESERVING its payoff.
+
+    The model is asked to end ``clip_end`` on the concluding/payoff sentence, so
+    when the chosen thought runs past ``CLIP_WINDOW_MAX_HARD_SECONDS`` we keep
+    ``clip_end`` FIXED and trim from the FRONT: push ``clip_start`` forward to the
+    earliest sentence-opening word that brings the window under the cap (and still
+    at/above the floor), keeping the most setup context the clip can while still
+    landing on the payoff.
+
+    Only in the rare case where the payoff sentence ALONE exceeds the cap (no
+    sentence-opening word lands late enough to fit) do we fall back to the old
+    behavior: pull ``clip_end`` back to the latest sentence boundary under the cap
+    (the payoff is sacrificed). No-op when the clip already fits.
     """
     cs, ce = data.get("clip_start"), data.get("clip_end")
     if not isinstance(cs, (int, float)) or not isinstance(ce, (int, float)):
         return
     cap = config.CLIP_WINDOW_MAX_HARD_SECONDS
+    floor = config.CLIP_WINDOW_MIN_SECONDS
     if ce - cs <= cap:
         return
 
@@ -597,12 +796,28 @@ def _trim_to_cap(data: dict, words: list) -> None:
         w for w in words
         if w.get("start") is not None and w.get("end") is not None and (w.get("word") or "").strip()
     ]
+
+    # Preferred: keep the payoff (clip_end) and push clip_start forward. A valid
+    # new start lands the window in [floor, cap] while still ending on clip_end:
+    #   new_start >= ce - cap   (window <= cap)
+    #   new_start <= ce - floor (window >= floor)
+    # Pick the EARLIEST opening word in that band -> the longest clip that fits.
+    band = [t for t in _sentence_open_starts(ws) if (ce - cap) <= t <= (ce - floor) and t > cs]
+    if band:
+        new_start = min(band)
+        logger.warning(
+            "Clip window %.1fs exceeds cap %ds; moved clip_start %.2f -> %.2f to "
+            "preserve payoff (now %.1fs)",
+            ce - cs, cap, cs, new_start, ce - new_start,
+        )
+        data["clip_start"] = new_start
+        return
+
+    # Fallback: the payoff sentence won't fit -> pull clip_end back to the latest
+    # sentence boundary under the cap (old behavior; payoff sacrificed).
     limit = cs + cap
-    floor = cs + config.CLIP_WINDOW_MIN_SECONDS
     sentence_ends = [w["end"] for w in ws if _ends_sentence(w["word"]) and cs < w["end"] <= limit]
-    # Prefer a sentence end at/above the min window; else the latest that fits;
-    # else any word end under the cap; else a hard cut at the cap.
-    in_band = [t for t in sentence_ends if t >= floor]
+    in_band = [t for t in sentence_ends if t >= cs + floor]
     if in_band:
         new_end = max(in_band)
     elif sentence_ends:
@@ -612,7 +827,8 @@ def _trim_to_cap(data: dict, words: list) -> None:
         new_end = max(word_ends) if word_ends else limit
 
     logger.warning(
-        "Clip window %.1fs exceeds cap %ds; trimming clip_end %.2f -> %.2f (now %.1fs)",
+        "Clip window %.1fs exceeds cap %ds and the payoff sentence won't fit; "
+        "trimmed clip_end %.2f -> %.2f (now %.1fs)",
         ce - cs, cap, ce, new_end, new_end - cs,
     )
     data["clip_end"] = new_end
@@ -691,9 +907,7 @@ def _snap_to_sentences(data: dict, words: list) -> None:
     # End times of words that close a sentence.
     end_times = [w["end"] for w in ws if _ends_sentence(w["word"])]
     # Start times of words that open a sentence (first word, or after a closer).
-    start_times = [ws[0]["start"]] + [
-        ws[i]["start"] for i in range(1, len(ws)) if _ends_sentence(ws[i - 1]["word"])
-    ]
+    start_times = _sentence_open_starts(ws)
     if not end_times or not start_times:
         return
 
@@ -785,6 +999,7 @@ def extract_highlights(transcript: dict) -> dict:
         _trim_to_cap(parsed, words)
     _validate(parsed)
     _brand_gate(parsed)
+    _content_gate(parsed, transcript)
 
     # Snap onto real sentence boundaries so the clip never cuts a word in half
     # and never opens/ends mid-thought, then re-extend/re-cap: snapping clip_start
@@ -805,6 +1020,9 @@ def extract_highlights(transcript: dict) -> dict:
     return parsed
 
 
+_RETRY_SLEEP_S = 65  # sleep between attempts to clear the 1-min rate-limit window
+
+
 def extract_highlights_with_retry(transcript: dict, attempts: int = 3) -> dict:
     """Call :func:`extract_highlights` up to ``attempts`` times, tolerating the
     model's non-deterministic output.
@@ -813,10 +1031,10 @@ def extract_highlights_with_retry(transcript: dict, attempts: int = 3) -> dict:
     count (e.g. 5 ``image_prompts`` instead of 4) or stray trailing data that trips
     ``_validate``/``json.loads`` (both raise ``ValueError``). Rather than die on the
     first throw, retry a few times — a later attempt almost always passes. Only
-    ``ValueError`` is caught (schema/parse variance); transport/API errors propagate
-    immediately. Re-raises the last ``ValueError`` after the final attempt fails.
+    ``ValueError`` and ``RateLimitError`` are caught; other transport/API errors
+    propagate immediately. Re-raises the last error after the final attempt fails.
     """
-    last_exc: ValueError | None = None
+    last_exc: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
             return extract_highlights(transcript)
@@ -826,6 +1044,15 @@ def extract_highlights_with_retry(transcript: dict, attempts: int = 3) -> dict:
                 "extract_highlights attempt %d/%d failed (non-deterministic): %s",
                 attempt, attempts, exc,
             )
+        except anthropic.RateLimitError as exc:
+            last_exc = exc
+            logger.warning(
+                "extract_highlights attempt %d/%d hit rate limit: %s",
+                attempt, attempts, exc,
+            )
+        if attempt < attempts:
+            logger.info("Sleeping %ds before retry %d/%d …", _RETRY_SLEEP_S, attempt + 1, attempts)
+            time.sleep(_RETRY_SLEEP_S)
     assert last_exc is not None
     raise last_exc
 

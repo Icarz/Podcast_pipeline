@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import time
+from datetime import date, timedelta
 
 import requests
 from dotenv import load_dotenv
@@ -37,22 +38,47 @@ def _api_key() -> str | None:
 
 
 def _load_footage_history() -> list:
-    """Return list of previously-used Pexels video ids (most-recent last).
+    """Return list of ``[video_id, "YYYY-MM-DD"]`` entries, TTL-filtered.
 
-    Missing/corrupt file -> []. Mirrors modules/posted_history.py's crash-safe
-    read so a bad ledger never breaks a run.
+    Migrates the old plain-id format gracefully: bare ids (not wrapped in a
+    ``[id, date]`` pair) are treated as stamped today so nothing breaks on first
+    load after the format change.
+
+    Missing/corrupt file -> [].
     """
     try:
         with open(config.FOOTAGE_HISTORY_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data.get("used_video_ids", []) if isinstance(data, dict) else []
+        raw = data.get("used_video_ids", []) if isinstance(data, dict) else []
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return []
 
+    today_str = date.today().isoformat()
+    cutoff = (date.today() - timedelta(days=config.FOOTAGE_HISTORY_TTL_DAYS)).isoformat()
 
-def _save_footage_history(ids: list) -> None:
-    """Persist used ids, capped to FOOTAGE_HISTORY_MAX most-recent."""
-    capped = ids[-config.FOOTAGE_HISTORY_MAX:]
+    entries: list = []
+    migrated = False
+    for item in raw:
+        if isinstance(item, list) and len(item) == 2:
+            vid, stamp = item
+            if stamp >= cutoff:
+                entries.append([vid, stamp])
+        else:
+            entries.append([item, today_str])
+            migrated = True
+
+    if migrated:
+        logger.info("Migrated %d plain footage-history ids to timestamped format", sum(1 for _ in raw if not (isinstance(_, list) and len(_) == 2)))
+
+    return entries
+
+
+def _save_footage_history(prior_entries: list, new_ids: list) -> None:
+    """Persist ``prior_entries`` + ``new_ids`` (stamped today), capped to most-recent."""
+    today_str = date.today().isoformat()
+    new_entries = [[vid, today_str] for vid in new_ids]
+    all_entries = prior_entries + new_entries
+    capped = all_entries[-config.FOOTAGE_HISTORY_MAX:]
     try:
         os.makedirs(os.path.dirname(config.FOOTAGE_HISTORY_PATH), exist_ok=True)
         with open(config.FOOTAGE_HISTORY_PATH, "w", encoding="utf-8") as f:
@@ -94,7 +120,7 @@ def _cached_for_slug(out_dir: str, slug: str) -> tuple[str, int | None] | None:
     return None
 
 
-def _request(query: str, orientation: str, per_page: int = None) -> dict | None:
+def _request(query: str, orientation: str, per_page: int = None, page: int = 1) -> dict | None:
     """One Pexels search call with backoff on 429; returns parsed JSON or None."""
     headers = {"Authorization": _api_key()}
     params = {
@@ -102,6 +128,7 @@ def _request(query: str, orientation: str, per_page: int = None) -> dict | None:
         "orientation": orientation,
         "size": config.PEXELS_SIZE,
         "per_page": per_page or config.PEXELS_PER_PAGE,
+        "page": page,
     }
     for attempt in range(len(config.PEXELS_BACKOFFS) + 1):
         try:
@@ -153,7 +180,7 @@ def _best_vertical_file(video: dict) -> str | None:
 def _find_video(
     query: str, used_ids: set | None = None, history_ids: set | None = None
 ) -> tuple[str | None, int | None]:
-    """Search ``query`` across orientations for a usable video.
+    """Search ``query`` across orientations (and up to 2 pages) for a usable video.
 
     Two-tier dedup:
       * ``used_ids`` — HARD block: ids already taken THIS run. Never returned, so
@@ -164,6 +191,9 @@ def _find_video(
         history clip (not in ``used_ids``) rather than leave the slot empty — a
         cross-episode repeat beats a hole.
 
+    If page 1 yields zero fresh (non-history, quality-passing) clips, page 2 is
+    fetched before falling back.  Fallbacks accumulate across both pages.
+
     Pulls several candidates per query. Returns ``(download_url, video_id)``, or
     ``(None, None)`` if nothing usable is left at all.
     """
@@ -171,41 +201,39 @@ def _find_video(
     history_ids = history_ids or set()
     fallback: tuple[str, int] | None = None  # best history-but-not-this-run clip
     quality_fallback: tuple[str, int] | None = None  # best fresh clip that failed the quality gate
-    for orientation in config.PEXELS_ORIENTATIONS:
-        data = _request(query, orientation, per_page=config.PEXELS_VIDEO_PER_PAGE)
-        if not data:
-            continue
-        for video in data.get("videos", []):
-            vid = video.get("id")
-            if vid in used_ids:
-                logger.info("Pexels video %s for %r already used this run; skipping to next", vid, query)
+
+    for page in (1, 2):
+        if page == 2:
+            logger.info("Pexels page 1 exhausted for %r, fetching page 2", query)
+        for orientation in config.PEXELS_ORIENTATIONS:
+            data = _request(query, orientation, per_page=config.PEXELS_VIDEO_PER_PAGE, page=page)
+            if not data:
                 continue
-            url = _best_vertical_file(video)
-            if not url:
-                continue
-            if vid in history_ids:
-                # Used by a prior episode: hold the first such clip as a last
-                # resort and keep looking for one that's fresh vs history.
-                if fallback is None:
-                    fallback = (url, vid)
-                logger.info("Pexels video %s for %r in footage history; holding as fallback", vid, query)
-                continue
-            # Quality gate: reject footage that contradicts the brand (too dark /
-            # off-palette, close-up or group faces, legible on-screen text) by
-            # inspecting the candidate's poster frames only (no full download). A
-            # failing candidate is held as a last resort so the gate can never
-            # leave a slot empty — it just prefers a clip that passes.
-            ok, reason, metrics = bg_quality.assess(video)
-            if not ok:
-                if quality_fallback is None:
-                    quality_fallback = (url, vid)
-                logger.info(
-                    "Pexels video %s for %r failed quality gate (%s) %s; skipping to next",
-                    vid, query, reason, metrics,
-                )
-                continue
-            logger.info("Pexels match for %r (%s): video %s [quality %s]", query, orientation, vid, metrics)
-            return url, vid
+            for video in data.get("videos", []):
+                vid = video.get("id")
+                if vid in used_ids:
+                    logger.info("Pexels video %s for %r already used this run; skipping to next", vid, query)
+                    continue
+                url = _best_vertical_file(video)
+                if not url:
+                    continue
+                if vid in history_ids:
+                    if fallback is None:
+                        fallback = (url, vid)
+                    logger.info("Pexels video %s for %r in footage history; holding as fallback", vid, query)
+                    continue
+                ok, reason, metrics = bg_quality.assess(video)
+                if not ok:
+                    if quality_fallback is None:
+                        quality_fallback = (url, vid)
+                    logger.info(
+                        "Pexels video %s for %r failed quality gate (%s) %s; skipping to next",
+                        vid, query, reason, metrics,
+                    )
+                    continue
+                logger.info("Pexels match for %r (%s, page %d): video %s [quality %s]", query, orientation, page, vid, metrics)
+                return url, vid
+
     if fallback is not None:
         url, vid = fallback
         logger.warning(
@@ -343,10 +371,16 @@ def _acquire_for_query(
         return cpath, cvid
 
     url, vid = _find_video(query, used_ids, history_ids)
+
+    if url is None or vid is None:
+        logger.info("Pexels exhausted for %r, trying Pixabay fallback", query)
+        from modules import pixabay_bg
+        url, vid = pixabay_bg._find_video(query, used_ids, history_ids)
+
     if url and vid is not None:
         path = os.path.join(out_dir, f"{config.BG_IMAGE_PREFIX}{slug}_{vid}.mp4")
         if _download(url, path):
-            logger.info("Downloaded Pexels background: %s (video %s)", os.path.basename(path), vid)
+            logger.info("Downloaded background: %s (video %s)", os.path.basename(path), vid)
             return path, vid
     return None
 
@@ -378,8 +412,8 @@ def fetch_backgrounds(queries: list[str], out_dir: str = None, force: bool = Fal
     primary = queries[:n_slots]
     spares = queries[n_slots:]  # the 5th+ backup queries
 
-    prior_ids = _load_footage_history()        # cross-episode history (soft avoid)
-    history_ids: set = set(prior_ids)          # ids used by PREVIOUS episodes
+    prior_entries = _load_footage_history()     # cross-episode history (soft avoid), TTL-filtered
+    history_ids: set = set(e[0] for e in prior_entries)  # ids used by PREVIOUS episodes
     paths: list[str] = []
     chosen_ids: list[int] = []   # final id per filled slot, for the distinctness log
     used_ids: set = set()        # Pexels video ids already taken this run -> no repeats.
@@ -413,7 +447,7 @@ def fetch_backgrounds(queries: list[str], out_dir: str = None, force: bool = Fal
         return None
 
     # Persist this run's picks so the NEXT episode avoids them (capped, oldest out).
-    _save_footage_history(prior_ids + newly_used)
+    _save_footage_history(prior_entries, newly_used)
 
     # Confirm every filled slot got a distinct Pexels video id (no clip repeats).
     distinct = len(set(chosen_ids)) == len(chosen_ids)
