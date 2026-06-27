@@ -298,7 +298,7 @@ def run(feed_arg: str, episode: dict | None = None, privacy_status: str = "priva
     }
 
 
-_AUTO_MAX_EPISODE_ATTEMPTS = 3
+_AUTO_MAX_EPISODE_ATTEMPTS = 5
 
 
 def run_auto(privacy_status: str = "private") -> dict | None:

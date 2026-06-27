@@ -165,7 +165,10 @@ SYSTEM_PROMPT = (
     '  "hook"        : string — a contrarian identity-frame hook, under 15 words. See HOOK RULES above.\n'
     '  "insights"    : array of exactly 3 strings — the key takeaways. Each '
     "insight MUST be <= 100 characters total. Hard cap, no exceptions. Write them as "
-    "IDENTITY STATEMENTS, not explanations — punchier is better:\n"
+    "IDENTITY STATEMENTS, not explanations — punchier is better. EVERY insight must "
+    "use 'you/your', 'me/my' (viewer's internal voice), or open with a direct "
+    "imperative ('Move first', 'Stop', 'Choose') — pure 3rd-person descriptions of "
+    "external events ('careers were built on…', 'the system did…') are banned:\n"
     "  - BAD: 'Higher fiber intake leads to more deep sleep according to research' (explanatory)\n"
     "  - GOOD: 'Your fiber intake dictates your deep sleep — period' (identity frame)\n"
     "  - BAD: 'Choosing the right handle means asking if this is happening to me or for me'\n"
@@ -618,16 +621,29 @@ def _brand_gate(data: dict) -> None:
             f"imperative): {hook!r}. Must contain 'you/your' or a contrarian imperative."
         )
 
-    # 2. At least 2/3 insights must be 2nd-person identity statements.
-    second_person_count = sum(
-        1 for ins in insights
-        if "you" in ins.lower() or "your" in ins.lower()
-    )
+    # 2. At least 2/3 insights must be viewer-addressed: 2nd-person ("you/your"),
+    # 1st-person internal voice ("me/my/i ") as the viewer thinking aloud, or a
+    # direct imperative verb opening ("move", "stop", "choose", "act", "be ",
+    # "start", "ask ", "drop"). Pure 3rd-person external-system descriptions
+    # ("entire careers were built on…") are the only thing we reject here.
+    _VIEWER_SIGNALS = ("you", "your", " me", " my", " i ")
+    _IMPERATIVES = ("move ", "stop ", "choose ", "act ", "be ", "start ", "ask ", "drop ")
+
+    def _is_viewer_addressed(ins: str) -> bool:
+        low = ins.lower()
+        if any(sig in low for sig in _VIEWER_SIGNALS):
+            return True
+        # Imperative opening: first word is a command directed at the viewer.
+        if any(low.startswith(imp) or low.startswith(imp.strip() + ",") for imp in _IMPERATIVES):
+            return True
+        return False
+
+    second_person_count = sum(1 for ins in insights if _is_viewer_addressed(ins))
     if second_person_count < 2:
         raise ValueError(
-            f"BRAND GATE — only {second_person_count}/3 insights are 2nd-person "
-            f"identity statements. Insights must address the viewer, not describe "
-            f"external systems. Insights: {insights}"
+            f"BRAND GATE — only {second_person_count}/3 insights are viewer-addressed "
+            f"(need 'you/your', 'me/my', or an imperative opening). Pure 3rd-person "
+            f"external descriptions are not allowed. Insights: {insights}"
         )
 
     # 3. Hook must not be a pure scandal/exposure frame with no viewer agency.
