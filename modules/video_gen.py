@@ -397,6 +397,27 @@ def _music_track(window: float):
     return music
 
 
+def _render_cta(text: str, font: ImageFont.FreeTypeFont) -> np.ndarray:
+    """Render the CTA pill ('Follow for more') as a transparent RGBA array."""
+    measure = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+    l, t, r, b = measure.textbbox((0, 0), text, font=font)
+    text_w, text_h = r - l, b - t
+    pad_x, pad_y = config.CTA_PILL_PAD_X, config.CTA_PILL_PAD_Y
+
+    pill_w = text_w + 2 * pad_x
+    pill_h = text_h + 2 * pad_y
+    img = Image.new("RGBA", (pill_w, pill_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    alpha = int(round(config.CTA_PILL_OPACITY * 255))
+    draw.rounded_rectangle(
+        (0, 0, pill_w - 1, pill_h - 1),
+        radius=config.CTA_PILL_RADIUS,
+        fill=(*config.CTA_PILL_COLOR, alpha),
+    )
+    draw.text((pad_x - l, pad_y - t), text, font=font, fill=config.CTA_COLOR)
+    return np.array(img)
+
+
 def _render_watermark(text: str, font: ImageFont.FreeTypeFont) -> np.ndarray:
     """Render the podcast-name watermark as solid white text on a semi-transparent
     dark rounded pill, to a transparent RGBA array. The pill guarantees contrast
@@ -500,11 +521,14 @@ def build_video(
         groups = group_words(in_window)
         cap_y = int(h * config.CAPTION_CENTER_Y)
         n_clips = 0
-        for group in groups:
+        for gi, group in enumerate(groups):
             texts = [g["word"] for g in group]
             group_end_rel = group[-1]["end"] - start
             for i, gw in enumerate(group):
                 seg_start = max(0.0, gw["start"] - start)
+                # Pull the hook text onto screen by 0.2s — no dead air at open.
+                if gi == 0 and i == 0:
+                    seg_start = min(seg_start, 0.2)
                 seg_end = (group[i + 1]["start"] - start) if i < len(group) - 1 else group_end_rel
                 seg_end = min(window, seg_end)
                 if seg_end - seg_start <= 0:
@@ -534,6 +558,25 @@ def build_video(
                 .with_position((wm_x, wm_y))
             )
             layers.append(wm)
+
+        # CTA overlay: "Follow for more" pill, centered, fades in for the last
+        # CTA_DURATION seconds. Skipped when the window is too short to fit it.
+        if config.CTA_TEXT and config.CTA_DURATION > 0 and window > config.CTA_DURATION + 0.5:
+            cta_font = ImageFont.truetype(font_path, config.CTA_FONT_SIZE)
+            cta_arr = _render_cta(config.CTA_TEXT, cta_font)
+            cta_h_px, cta_w_px = cta_arr.shape[0], cta_arr.shape[1]
+            cta_x = (w - cta_w_px) // 2
+            cta_y_px = int(h * config.CTA_Y) - cta_h_px // 2
+            cta_start = window - config.CTA_DURATION
+            cta_clip = (
+                ImageClip(cta_arr, transparent=True)
+                .with_start(cta_start)
+                .with_duration(config.CTA_DURATION)
+                .with_position((cta_x, cta_y_px))
+                .with_effects([vfx.CrossFadeIn(config.CTA_FADE_IN)])
+            )
+            layers.append(cta_clip)
+            logger.info("CTA overlay: '%s' at t=%.1fs (last %.1fs)", config.CTA_TEXT, cta_start, config.CTA_DURATION)
 
         # Mix the fixed background music under the (full-volume) voice. The
         # music is looped/trimmed to the window, quieted, and faded; absent

@@ -334,3 +334,16 @@ WATERMARK_PILL_OPACITY = 0.45            # 45% black behind the text
 WATERMARK_PILL_PAD_X = 18                # horizontal padding text -> pill edge
 WATERMARK_PILL_PAD_Y = 10                # vertical padding text -> pill edge
 WATERMARK_PILL_RADIUS = 16               # rounded-corner radius (px)
+
+# CTA overlay (appears centered in the last few seconds of every video).
+CTA_TEXT = "Follow for more"
+CTA_DURATION = 2.5          # seconds the CTA is visible at end
+CTA_FADE_IN = 0.4           # fade-in duration
+CTA_Y = 0.80                # vertical center (fraction of height); below caption band, above safe-area bottom
+CTA_FONT_SIZE = 46
+CTA_COLOR = (255, 255, 255)
+CTA_PILL_COLOR = (0, 0, 0)
+CTA_PILL_OPACITY = 0.60
+CTA_PILL_PAD_X = 28
+CTA_PILL_PAD_Y = 14
+CTA_PILL_RADIUS = 22
