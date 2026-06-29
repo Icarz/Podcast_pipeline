@@ -23,10 +23,9 @@ LOG_FILE = os.path.join(LOGS_DIR, "pipeline.log")
 # ROTATION PHILOSOPHY: prefer solo-speaker / monologue-format shows. Interview
 # podcasts produce two-voice clips that perform poorly as Shorts.
 PODCAST_FEEDS = {
-    # Huberman Lab — Andrew Huberman (Megaphone)     https://feeds.megaphone.fm/hubermanlab
-    # Solo deep-dives on neuroscience/behavior (1-3 hrs). Highest single-speaker
-    # density; episodes are rich in 45-58s monologue segments. Brand: neurology/focus/behavior.
-    "huberman_lab":   "https://feeds.megaphone.fm/hubermanlab",
+    # The Charged Life — Brendon Burchard (Libsyn)    https://feeds.libsyn.com/brendonburchard/rss
+    # Solo monologue, high-performance identity/motivation. No biohacking/supplement risk.
+    "brendon_burchard": "https://feeds.libsyn.com/brendonburchard/rss",
     # The Mel Robbins Podcast (Simplecast)            https://feeds.simplecast.com/UCwaTX1J
     # Solo motivational; consistently single-speaker. Brand: identity/resilience.
     "mel_robbins":    "https://feeds.simplecast.com/UCwaTX1J",
@@ -60,7 +59,7 @@ DEFAULT_FEED = "mindset_mentor"
 # date.weekday() is Mon=0, Tue=1, ..., Sun=6. Any weekday NOT listed is a
 # non-posting day: --auto logs "no posting day today" and exits 0.
 ROTATION = {
-    0: "huberman_lab",     # Monday
+    0: "brendon_burchard", # Monday
     1: "mel_robbins",      # Tuesday
     2: "jordan_peterson",  # Wednesday
     4: "daily_stoic",      # Friday
