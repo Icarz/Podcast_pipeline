@@ -23,10 +23,7 @@ LOG_FILE = os.path.join(LOGS_DIR, "pipeline.log")
 # ROTATION PHILOSOPHY: prefer solo-speaker / monologue-format shows. Interview
 # podcasts produce two-voice clips that perform poorly as Shorts.
 PODCAST_FEEDS = {
-    # The Charged Life — Brendon Burchard (Libsyn)    https://feeds.libsyn.com/brendonburchard/rss
-    # Solo monologue, high-performance identity/motivation. No biohacking/supplement risk.
-    "brendon_burchard": "https://feeds.libsyn.com/brendonburchard/rss",
-    # The Mel Robbins Podcast (Simplecast)            https://feeds.simplecast.com/UCwaTX1J
+# The Mel Robbins Podcast (Simplecast)            https://feeds.simplecast.com/UCwaTX1J
     # Solo motivational; consistently single-speaker. Brand: identity/resilience.
     "mel_robbins":    "https://feeds.simplecast.com/UCwaTX1J",
     # The Jordan B. Peterson Podcast (Megaphone)     https://feeds.megaphone.fm/BVDWV6444647327
