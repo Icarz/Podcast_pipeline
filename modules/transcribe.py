@@ -5,9 +5,13 @@ text plus segment-level timestamps.
 
 Groq enforces a 25 MB request limit; long episodes (Modern Wisdom runs 2-3 h,
 often 100 MB+) exceed it and the connection drops silently. For oversized files
-we split the audio into ~20-minute chunks with ffmpeg, transcribe each chunk,
+we split the audio into ~5-minute chunks with ffmpeg, transcribe each chunk,
 and stitch the results back into one transcript with timestamps shifted by each
 chunk's real start offset -- so callers get the identical dict shape either way.
+Chunks are kept short (not just under the byte limit) because Whisper's own
+word-timestamp alignment drifts within a single long transcription request;
+short chunks bound how far that drift can accumulate before the next chunk's
+boundary resets it. See ``MAX_CHUNK_SECONDS`` below for the full story.
 """
 
 import logging
@@ -32,9 +36,21 @@ MAX_SINGLE_FILE_BYTES = 24 * 1024 * 1024
 # real bitrate (size / duration) so a high-bitrate episode gets shorter chunks
 # rather than blindly cutting 20-min segments that can themselves exceed 25 MB.
 TARGET_CHUNK_BYTES = 20 * 1024 * 1024
-# Clamp the derived segment length: never longer than 20 min (keeps stitching
-# offsets sane) nor shorter than 1 min (avoids a pathological flood of chunks).
-MAX_CHUNK_SECONDS = 1200
+# Clamp the derived segment length. Confirmed by measurement (Jul 1 2026): the
+# chunk-stitching offset itself is accurate to ~50ms cumulative (ffprobe's
+# duration estimate on a stream-copied chunk is fine) -- the real source of a
+# ~1-1.5s caption/audio desync traced to a real render was Whisper's own
+# word-timestamp alignment drifting WITHIN a single long transcription request
+# (the bad clip sat 8.8 minutes into an uninterrupted 20-minute chunk, nowhere
+# near a chunk boundary). Whisper's word timestamps are decoder cross-attention
+# based, not a true forced-aligner, and drift increases the further you get
+# from the start of one unbroken inference. Shortening the per-request window
+# bounds how much drift can accumulate before the next (accurate) chunk
+# boundary resets it -- more Groq requests for very long episodes, but each
+# one is a ~5-8s round trip, so the added latency is minor next to the
+# correctness gain. Never longer than 5 min (keeps within-chunk timestamp
+# drift small) nor shorter than 1 min (avoids a pathological flood of chunks).
+MAX_CHUNK_SECONDS = 300
 MIN_CHUNK_SECONDS = 60
 
 
@@ -196,15 +212,51 @@ def _transcribe_chunked(audio_path: str, client: Groq, size_mb: float) -> dict:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _enforce_monotonic_words(words: list[dict]) -> list[dict]:
+    """Clamp word start/end times to be non-decreasing, in transcript (text) order.
+
+    Whisper occasionally emits a word with an earlier timestamp than the word
+    immediately before it in the transcript -- a real, confirmed alignment
+    glitch (production case: word "that" timestamped at 40.30s appeared right
+    after "being" at 40.56s, both correct in TEXT order). Every downstream
+    consumer that walks ``words`` sequentially assumes non-decreasing times:
+    ``video_gen``'s caption-clip loop computes each word's on-screen window as
+    ``[this_word.start, next_word.start)``, so an out-of-order start makes a
+    caption clip begin before the previous one has finished, rendering two
+    caption blocks on top of each other. ``ai_extract``'s sentence-boundary
+    snapping has the same assumption. Fix once here, at the source, rather
+    than in every consumer: clamp each word's start (and end) to at least the
+    previous word's end. This never reorders the words themselves (which
+    would garble the sentence), only tightens a timestamp that briefly ran
+    backwards.
+    """
+    out: list[dict] = []
+    prev_end = 0.0
+    for w in words:
+        start, end = w.get("start"), w.get("end")
+        if start is None or end is None:
+            out.append(w)
+            continue
+        if start < prev_end:
+            start = prev_end
+        if end < start:
+            end = start
+        out.append({**w, "start": start, "end": end})
+        prev_end = end
+    return out
+
+
 def transcribe(audio_path: str) -> dict:
     """Transcribe ``audio_path`` with Groq Whisper (segment + word timestamps).
 
     Files at/under Groq's 25 MB request limit go in a single request; larger
-    files are split into ~20-minute chunks, transcribed individually, and
+    files are split into ~5-minute chunks, transcribed individually, and
     stitched with offset-corrected timestamps. Either way returns a dict with:
         ``text``     -- the full transcript string
         ``segments`` -- list of {"start": float, "end": float, "text": str}
-        ``words``    -- list of {"word": str, "start": float, "end": float}
+        ``words``    -- list of {"word": str, "start": float, "end": float},
+                         guaranteed non-decreasing start/end times (see
+                         ``_enforce_monotonic_words``)
     """
     if not os.path.exists(audio_path):
         raise FileNotFoundError(audio_path)
@@ -214,14 +266,16 @@ def transcribe(audio_path: str) -> dict:
     size_mb = size_bytes / (1024 * 1024)
 
     if size_bytes > MAX_SINGLE_FILE_BYTES:
-        return _transcribe_chunked(audio_path, client, size_mb)
+        result = _transcribe_chunked(audio_path, client, size_mb)
+    else:
+        logger.info("Transcribing %s (%.1f MB) with %s", os.path.basename(audio_path), size_mb, MODEL)
+        result = _transcribe_file(audio_path, client)
+        logger.info(
+            "Transcribed %d segments, %d words, %d chars",
+            len(result["segments"]), len(result["words"]), len(result["text"]),
+        )
 
-    logger.info("Transcribing %s (%.1f MB) with %s", os.path.basename(audio_path), size_mb, MODEL)
-    result = _transcribe_file(audio_path, client)
-    logger.info(
-        "Transcribed %d segments, %d words, %d chars",
-        len(result["segments"]), len(result["words"]), len(result["text"]),
-    )
+    result["words"] = _enforce_monotonic_words(result["words"])
     return result
 
 

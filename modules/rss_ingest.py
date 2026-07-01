@@ -220,12 +220,15 @@ def _is_off_brand(entry) -> bool:
     return False
 
 
-def _prescreen_episode(title: str, description: str) -> bool:
-    """Ask Claude Haiku if this episode likely contains on-brand content.
+def _prescreen_episode(title: str, description: str, host_name: str | None = None) -> bool:
+    """Ask Claude Haiku if this episode likely contains on-brand content AND
+    (when ``host_name`` is given) is a SOLO episode by that host.
 
     Binary YES/NO call using the cheapest model (~$0.0003). Runs BEFORE the
     audio download so a borderline episode that passes keyword filters but
-    would still yield an off-brand clip is caught at minimal cost.
+    would still yield an off-brand clip — or a guest-interview episode where
+    the named host isn't even the one speaking — is caught at minimal cost.
+    Both checks are folded into one call rather than two to keep this cheap.
 
     Fails open on any API error — a broken prescreen never blocks the pipeline.
     Bypassed entirely when ``config.PRESCREEN_ENABLED`` is False.
@@ -238,13 +241,24 @@ def _prescreen_episode(title: str, description: str) -> bool:
         return True
 
     desc_snippet = (description or "")[:400]
+    host_clause = ""
+    if host_name:
+        host_clause = (
+            f"\n\nThis show's host is {host_name}. If the title or description "
+            f"indicates a GUEST or interviewee is featured and does substantial "
+            f"speaking (an interview episode, a guest credited in the title or "
+            f"subtitle — e.g. \"| Guest Name\", \"with Guest Name\", \"ft. Guest "
+            f"Name\", \"feat. Guest Name\"), answer NO regardless of topic fit — "
+            f"only a SOLO episode where {host_name} is the one speaking qualifies."
+        )
     prompt = (
         f"Podcast episode title: {title}\n"
         f"Description: {desc_snippet}\n\n"
         "Does this episode likely contain at least one clear, self-contained insight "
         "about human psychology, personal identity, resilience, focus, motivation, "
         "emotional regulation, or self-awareness — something a viewer could apply "
-        "directly to their own life and sense of self?\n\n"
+        "directly to their own life and sense of self?"
+        f"{host_clause}\n\n"
         "Respond with ONLY 'YES' or 'NO'."
     )
     try:
@@ -267,7 +281,27 @@ def _prescreen_episode(title: str, description: str) -> bool:
         return True
 
 
-def pick_random_entry(feed_url: str, exclude_guids: set) -> tuple | None:
+_GUEST_TITLE_PATTERN = re.compile(
+    r"(?:\||\bwith\b|\bft\.?\b|\bfeat\.?\b|\bw/)\s*"
+    r"((?:Dr\.|Prof\.|Rabbi|Fr\.)?\s*[A-Z][a-zA-Z'.-]+(?:\s+[A-Z][a-zA-Z'.-]+){1,3})\s*[.!?]?\s*$"
+)
+
+
+def _looks_like_guest_episode(title: str) -> bool:
+    """Cheap regex fallback: True if ``title`` ends in a "| Name" / "with Name" /
+    "ft. Name" style guest credit.
+
+    This is a last-resort heuristic used only when the smarter Haiku-based
+    solo/guest check in :func:`_prescreen_episode` has already been exhausted
+    (see the fallback branch in :func:`pick_random_entry`) — it deliberately
+    only looks for the common "guest credited at the end of the title"
+    convention (seen on Jordan Peterson, Modern Wisdom, etc.) rather than
+    trying to fully understand the title.
+    """
+    return bool(_GUEST_TITLE_PATTERN.search(title or ""))
+
+
+def pick_random_entry(feed_url: str, exclude_guids: set, host_name: str | None = None) -> tuple | None:
     """Parse ``feed_url`` and return ``(feed, entry, metadata)`` for a random on-brand unused episode.
 
     Three-stage selection:
@@ -278,6 +312,11 @@ def pick_random_entry(feed_url: str, exclude_guids: set) -> tuple | None:
          (brand_score + 1) where brand_score counts ``config.EPISODE_BRAND_KEYWORDS``
          hits in title + description — so on-brand episodes are more likely but
          every episode keeps a non-zero chance.
+
+    ``host_name`` (from ``config.PODCAST_HOSTS``), when given, is passed to the
+    prescreen so a guest-interview episode — where the named host isn't even
+    the one speaking — is rejected regardless of topic fit (hard rule: if the
+    host isn't speaking, don't take it).
 
     Falls back to the full unused pool (skipping only step 2) when ALL unused
     episodes are filtered out by the reject list, so the pipeline never stalls
@@ -325,6 +364,7 @@ def pick_random_entry(feed_url: str, exclude_guids: set) -> tuple | None:
         if _prescreen_episode(
             candidate.get("title", ""),
             candidate.get("summary") or candidate.get("description") or "",
+            host_name=host_name,
         ):
             chosen = candidate
             break
@@ -335,12 +375,25 @@ def pick_random_entry(feed_url: str, exclude_guids: set) -> tuple | None:
         )
 
     if chosen is None:
+        pool = on_brand
+        if host_name:
+            solo_pool = [e for e in on_brand if not _looks_like_guest_episode(e.get("title", ""))]
+            if solo_pool:
+                pool = solo_pool
+            else:
+                logger.warning(
+                    "Host-only fallback: every remaining candidate's title looks "
+                    "like a guest episode for host %r; proceeding anyway rather "
+                    "than stall the pipeline",
+                    host_name,
+                )
         logger.warning(
             "All %d prescreen attempts failed; falling back to highest "
-            "brand-scored episode in pool",
+            "brand-scored episode in pool%s",
             config.PRESCREEN_MAX_ATTEMPTS,
+            " (guest-title heuristic applied)" if host_name else "",
         )
-        chosen = max(on_brand, key=_brand_score)
+        chosen = max(pool, key=_brand_score)
 
     logger.info(
         "Random episode selected: %r (brand_score=%d | %d on-brand / %d unused "

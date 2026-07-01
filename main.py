@@ -218,7 +218,9 @@ def run(feed_arg: str, episode: dict | None = None, privacy_status: str = "priva
     #    pre-fetched episode handed in by run_auto so the feed is parsed once).
     if episode is None:
         used_guids = set(posted_history.load().keys())
-        picked = rss_ingest.pick_random_entry(feed_url, exclude_guids=used_guids)
+        picked = rss_ingest.pick_random_entry(
+            feed_url, exclude_guids=used_guids, host_name=config.PODCAST_HOSTS.get(feed_arg),
+        )
         if picked is None:
             raise RuntimeError(
                 f"All episodes in the RSS window for '{feed_arg}' have already been used. "
@@ -334,6 +336,7 @@ def run_auto(privacy_status: str = "private") -> dict | None:
         try:
             picked = rss_ingest.pick_random_entry(
                 feed_url, exclude_guids=used_guids | skipped_guids,
+                host_name=config.PODCAST_HOSTS.get(feed_key),
             )
         except Exception as exc:  # noqa: BLE001 - feed problems must not break scheduling
             logger.warning("Auto mode: feed '%s' unavailable (%s); exiting cleanly", feed_key, exc)
@@ -497,6 +500,7 @@ if __name__ == "__main__":
             for ep_attempt in range(1, _AUTO_MAX_EPISODE_ATTEMPTS + 1):
                 picked = rss_ingest.pick_random_entry(
                     feed_url, exclude_guids=used_guids | skipped_guids,
+                    host_name=config.PODCAST_HOSTS.get(args.feed),
                 )
                 if picked is None:
                     raise RuntimeError(

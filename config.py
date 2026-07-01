@@ -48,6 +48,23 @@ PODCAST_FEEDS = {
     "mark_manson":    "https://feeds.megaphone.fm/ISML9402684841",
 }
 
+# Named host per feed, used by rss_ingest's prescreen to reject guest/interview
+# episodes: if a guest is credited (title pattern like "| Guest Name", "with
+# Guest Name", "ft. Guest Name") the episode is skipped entirely rather than
+# risk extracting a clip of the GUEST's words attributed to the show's host.
+# HARD RULE (user directive, Jul 2026): if the named host isn't the one
+# speaking, don't take it — a solo/monologue episode is required.
+PODCAST_HOSTS = {
+    "mel_robbins":     "Mel Robbins",
+    "jordan_peterson": "Jordan Peterson",
+    "daily_stoic":     "Ryan Holiday",
+    "mindset_mentor":  "Rob Dial",
+    "jay_shetty":      "Jay Shetty",
+    "modern_wisdom":   "Chris Williamson",
+    "jocko_podcast":   "Jocko Willink",
+    "mark_manson":     "Mark Manson",
+}
+
 # Default feed used when none is specified.
 DEFAULT_FEED = "mindset_mentor"
 

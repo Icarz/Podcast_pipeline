@@ -40,7 +40,10 @@ SYSTEM_PROMPT = (
     "  (C) HOPE + AGENCY: they leave feeling there is a path forward — not hopeless, not trapped.\n"
     "  (D) SELF-KNOWLEDGE: they learn something true about how humans (and therefore they) work.\n"
     "The content universe is human behavior, neurology, focus, motivation, identity, "
-    "resilience, self-improvement, and meaning. Overthinking is a SIDE TOPIC only — "
+    "resilience, self-improvement, meaning, and money/wealth WHEN reframed as freedom, "
+    "power, or identity (never as personal-finance tips or a savings hack — 'the purpose "
+    "of money is to get free' is the validated frame; 'how to budget better' is not). "
+    "Overthinking is a SIDE TOPIC only — "
     "never the primary theme. A clip that only diagnoses a problem without offering a "
     "new lens, self-awareness, or implied agency FAILS the brand mission and must be "
     "skipped. The viewer must leave with INSIGHT + HOPE, not just awareness of a trap.\n\n"
@@ -54,7 +57,8 @@ SYSTEM_PROMPT = (
     "3. BRAND CHECK: the clip MUST (a) relate to at least one of: "
     "human behavior, neurology, focus, motivation, identity, resilience, "
     "self-awareness, self-knowledge, perspective on life, meaning, "
-    "emotional regulation, habit formation, stoicism, or self-belief "
+    "emotional regulation, habit formation, stoicism, self-belief, or "
+    "money/wealth reframed as freedom or identity (never personal-finance tips) "
     "as a universal principle; AND (b) serve at least one of the four "
     "BRAND MISSION outcomes above (self-awareness, new perspective, "
     "hope/agency, or self-knowledge). If the best clip fails either "
@@ -79,13 +83,23 @@ SYSTEM_PROMPT = (
     "AND the clip includes or implies a path to self-awareness or agency. "
     "The viewer discovers they are inside a system AND gets a new way to see it. "
     "PROVEN TOP PERFORMERS: "
-    "'Your Brain Is Addicted to Fake Scenarios' (873 YT views day-1), "
+    "'Your Brain Is Addicted to Fake Scenarios' (873 YT views day-1, 69% retention), "
+    "'Your Brain Won't Let Go Until You Face It' (68% retention), "
     "'Opt Out of Modern Culture Before It Breaks You' (621 YT views), "
     "'Always Grab the Right Handle' (948 YT views) — all share this mechanic "
-    "AND leave the viewer with a new way to respond.\n"
+    "AND leave the viewer with a new way to respond. "
+    "FEAR / ANXIETY / RUMINATION MECHANISMS are the single strongest recurring "
+    "sub-topic within TIER 1 (3 of the last 6 top performers, including 'Your Fear "
+    "Is a GPS' and both 'Brain' clips above) — actively favor transcript passages "
+    "about how fear, anxiety, or rumination actually work in the body/mind whenever "
+    "present, even over other TIER 1 candidates.\n"
     "   TIER 2: A reframe that gives the viewer a completely new lens on their own "
     "behavior or on life — stoic two-handle choices, identity vs. action distinctions, "
-    "contrarian principles that shift perspective.\n"
+    "contrarian principles that shift perspective, individuality-vs-conformity "
+    "(the courage to want more than the crowd finds acceptable — see 'You're Killing "
+    "Your Dreams Just to Fit In' and 'You're Not Obsessed Enough', both proven "
+    "performers), or money/wealth reframed as a vehicle for freedom or identity "
+    "(see 'Purpose of Money Is to Get Free' — validated top-2 performer).\n"
     "   TIER 3: Self-knowledge or motivational insight grounded in a universal human truth.\n"
     "   AVOID: clips that only diagnose a trap without a path out; clips about a single "
     "behavioral problem with no self-awareness payoff; inspirational quotes without "
@@ -118,21 +132,41 @@ SYSTEM_PROMPT = (
     "current behavior or worldview and imply they are on the wrong side of a divide. "
     "The viewer should feel: 'wait — am I doing this wrong?'\n\n"
     "WINNING FORMULA (use one of these structures every time):\n"
-    "  - 'Your [brain/nervous system/body] is [addicted to/hijacking/trapping you with] [common behavior]' "
-    "— HIGHEST PERFORMING (873 YT + 529 TikTok day-1). Use when the clip is TIER 1 topic.\n"
+    "  - 'Your [brain/nervous system/body] [won't let go of/is addicted to/is hijacking you with] "
+    "[common behavior] — [until/unless] [condition]' — DEFAULT / HIGHEST RETENTION (68-69% avg-view-"
+    "duration, the best of any hook family tested). Prioritize this whenever the clip is TIER 1 "
+    "topic. The mechanism named must be immediately, viscerally felt — not abstract — so the payoff "
+    "lands with almost no drop-off.\n"
     "  - 'You're [doing common thing] and it's [unexpected negative consequence]'\n"
     "  - '[Common belief] is a lie — here's what [wise/successful people] actually do'\n"
     "  - 'Every [person/situation] has [two sides] — [one destroys], [one elevates]'\n"
     "  - 'The world is [broken in specific way] — and [most people/you] are [complicit/unaware]'\n"
     "  - '[Uncomfortable truth] that nobody wants to hear'\n"
-    "  - 'Stop [common behavior] — it's [destroying/weakening] [something you value]'\n\n"
+    "  - 'Stop [common behavior] — it's [destroying/weakening] [something you value]'\n"
+    "  - IDENTITY-STAKES NUMBERED RULES (validated exception to the listicle ban — see BANNED "
+    "PATTERNS note below): '[Deep identity outcome — freedom/power/respect/control] — [N] "
+    "[rules/things/truths] that actually [work/matter]'. This is NOT a generic tips list: the "
+    "number must be in service of a contrarian identity payoff, framed as 'most people get this "
+    "wrong', not as neutral how-to information. Second-best performer tested (1,190 views, 61.1% "
+    "retention) when done this way.\n\n"
     "BANNED HOOK PATTERNS (these get 2-4 views, proven by data):\n"
-    "  - 'X tips/tricks/hacks for Y' — instructional, zero identity tension\n"
+    "  - 'X tips/tricks/hacks for Y' — instructional, zero identity tension. EXCEPTION: a numbered "
+    "format is allowed ONLY when it follows the IDENTITY-STAKES NUMBERED RULES structure above "
+    "(deep identity payoff + contrarian 'actually work' framing) — generic utility listicles "
+    "('5 tips to sleep better', '10 productivity hacks') remain banned.\n"
     "  - 'How to [achieve thing]' — promises information, not transformation\n"
     "  - 'The science behind X' — educational frame, audience scrolls past\n"
     "  - 'Why X happens' — explanatory, no stakes\n"
     "  - 'X things you didn't know about Y' — listicle, no emotional charge\n"
     "  - Any hook that could be a YouTube tutorial title\n\n"
+    "METAPHOR HOOK RULE: a hook built on a clever or abstract metaphor (e.g. 'Your fear is a GPS') "
+    "drives strong curiosity/clicks but is HIGH RISK for retention — tested data shows a metaphor "
+    "hook can win #1 in views (1,389) while losing badly on retention (39.2%, viewers bail in ~7s) "
+    "because the metaphor is never concretely cashed out. If you use a metaphor hook, the clip's "
+    "OPENING segment (clip_start) MUST immediately and concretely explain what the metaphor means "
+    "in practice — do not let it sit unexplained while the speaker builds up to it. If the "
+    "available transcript doesn't unpack the metaphor within the first few sentences of the clip, "
+    "prefer the neurological WINNING FORMULA instead.\n\n"
     "The hook must be writable in under 15 words. If it needs more, it's not sharp "
     "enough. The hook is NOT a summary of the clip — it's a provocative reframe that "
     "makes the clip's content feel urgent.\n\n"
@@ -248,6 +282,19 @@ SYSTEM_PROMPT = (
     "group/event setting. A person walking through a naturally busy street or "
     "public space is fine — the subject must remain a SINGLE identifiable figure "
     "among anonymous passersby, never a crowd scene where no individual stands out.\n"
+    "  - Crowds of any size, religious gatherings, political gatherings, "
+    "protests, marches, festivals, or any scene showing an identifiable "
+    "ethnic, cultural, or religious group activity. If a query could plausibly "
+    "return a photo of a mass of people, do not write it — no 'crowd passing', "
+    "'crowd rushing', 'people gathering', or similar phrasing, ever.\n"
+    "  - MORE THAN ONE PERSON, period. No couples, no duos, no two men/two "
+    "women, no friends walking together, no families, no partners. Every "
+    "single query — video AND photo — must depict EXACTLY ONE man, alone, "
+    "with no other person visible in frame. If the transcript's content "
+    "literally compares two people or two paths ('you and I', 'him vs her', "
+    "'one person does X, another does Y'), you MUST still depict only ONE "
+    "figure — the viewer's own single path — never render the comparison as "
+    "two figures in one shot.\n"
     "  - Faces of identifiable people (close-up portraits where the person is "
     "the subject).\n"
     "  - Person lying in bed, or intimate/sensual positioning.\n"
@@ -332,8 +379,10 @@ SYSTEM_PROMPT = (
     "in road golden hour' (two visible paths = the choice moment is filmable)\n"
     "    Concept 'the pain comes later anyway' → 'person walking alone into open "
     "horizon dusk' (moving toward unknown future = consequences ahead)\n"
-    "    Concept 'brain creates fake scenarios' → 'figure standing still crowd "
-    "rushing past golden hour' (frozen in your head while world moves)\n"
+    "    Concept 'brain creates fake scenarios' → 'man standing motionless as "
+    "storm clouds race overhead' (frozen in your head while the world moves — "
+    "NEVER use a crowd or second person to show 'world moving'; use weather, "
+    "light, or motion blur in the environment instead)\n"
     "    Concept 'discipline is freedom' → 'runner on open empty road at dawn' "
     "(chosen effort, unrestricted horizon ahead)\n"
     "    Concept 'you suppress who you are' → 'person walking away open door light' "
@@ -353,21 +402,22 @@ SYSTEM_PROMPT = (
     "APPEND the palette's treatment word to EVERY query. Do NOT pick a scene "
     "whose real-world light fights the palette.\n\n"
     "VISUAL QUALITY TIERS (how to FRAME the scene — NOT a scene shopping list; "
-    "scene subjects always come from STEP 1 content first. ALL subjects are MALE):\n"
-    "TIER 1 — HIGHEST IMPACT (serious, earned, purposeful): man doing intense "
-    "physical effort at dawn (push-ups on rooftop, pull-ups on bar, punching bag, "
-    "hard sprint on empty road), lone man standing at edge of something vast "
-    "(cliff, rooftop, mountain) looking out with quiet resolve, man walking alone "
-    "through morning mist on empty road with deliberate pace. Must feel earned "
-    "and serious — never recreational.\n"
-    "TIER 2 — HUMAN SCALE (purposeful, introspective): man sitting alone in "
-    "focused thought (empty room, window, rooftop), man writing goals or "
-    "journaling with intensity at desk, man working late under a single lamp, "
-    "man walking purposefully through city street at dawn (not strolling — "
-    "going somewhere), man in gym lifting weights alone, man on trail running "
-    "hard (not jogging), man with head bowed in deliberate stillness.\n"
+    "scene subjects always come from STEP 1 content first. ALL subjects are "
+    "EXACTLY ONE MALE FIGURE, always alone, never a second person of any kind "
+    "in frame — this is the single most important rule in this section):\n"
+    "TIER 1 — TRAINING / PHYSICAL EFFORT (highest impact, serious, earned): one "
+    "man training alone at dawn — push-ups on a rooftop, pull-ups on a bar, "
+    "punching a bag, lifting weights in an empty gym, a hard sprint or trail run "
+    "on an empty road. Must feel earned and serious — never recreational.\n"
+    "TIER 2 — WORK / DISCIPLINE / REFLECTION (purposeful, introspective): one "
+    "man working — at a laptop or workshop bench under a single lamp, writing "
+    "down goals or journaling with intensity at a desk, meditating alone in "
+    "stillness (seated upright, eyes closed, one figure only), walking "
+    "purposefully through a city street at dawn (going somewhere, not "
+    "strolling), sitting alone in focused thought by a window or on a rooftop.\n"
     "TIER 3 — AVOID: beach walks, coastal strolls, vacation scenery, coffee "
-    "shops, lifestyle interiors, anyone who looks like they are relaxing.\n\n"
+    "shops, lifestyle interiors, anyone who looks like they are relaxing, and "
+    "ANY shot with a second person, couple, group, or crowd regardless of tier.\n\n"
     "RULES:\n"
     "1. CONTENT-FIRST (NON-NEGOTIABLE): Every beat's scene subject must come "
     "directly from the specific concept named in STEP 1. If the same query could "
@@ -552,6 +602,62 @@ def _normalize_video_queries(data: dict, target: int) -> None:
     data["video_queries"] = cleaned
 
 
+# Deterministic backstop for the NEVER DEPICT rules in SYSTEM_PROMPT. The model
+# follows the prompt most of the time but not always (it once produced "two men
+# diverging path golden hour" and "man standing still crowd passing dawn" in the
+# same run despite both being against the prompt's own rules) — Pexels/Pixabay
+# then return literal footage of exactly what was asked for, and the post-fetch
+# bg_quality gate can miss it too (its Haar face-detector doesn't see small or
+# distant faces in a wide crowd shot). This regex scan on the QUERY TEXT ITSELF
+# is cheap, has no false-negative risk from image quality, and catches the
+# failure at the earliest possible point — before a single Pexels call is made.
+_BANNED_SCENE_WORDS = re.compile(
+    r"\b("
+    r"crowd|crowds|congregation|gathering|protest|march|rally|parade|festival|"
+    r"audience|stadium|conference|classroom|students|congregants|"
+    r"couple|couples|duo|pair|partners|team|"
+    r"group|groups|friends|family|families|"
+    r"woman|women|female|girl|girls|wife|girlfriend|mother|sister|daughter|"
+    r"she|her|"
+    r"together|each other"
+    r")\b",
+    re.IGNORECASE,
+)
+_BANNED_SCENE_PHRASES = (
+    "two men", "two women", "two people", "3 men", "three men", "group of",
+    "several people", "many people", "people gathering", "people passing",
+    "crowd passing", "crowd rushing",
+)
+
+
+def _scene_safety_gate(data: dict) -> None:
+    """Raise ValueError if any generated query violates the single-male-subject /
+    no-crowd rule, so the retry wrapper re-extracts instead of silently shipping
+    off-brand footage. Checks ``search_queries`` (strings) and ``video_queries``
+    (``{keyword, query}`` objects) — the only two fields that ever reach Pexels.
+    """
+    offenders: list[str] = []
+
+    def _check(text: str) -> None:
+        low = text.lower()
+        if _BANNED_SCENE_WORDS.search(low) or any(p in low for p in _BANNED_SCENE_PHRASES):
+            offenders.append(text)
+
+    for q in data.get("search_queries", []):
+        if isinstance(q, str):
+            _check(q)
+    for item in data.get("video_queries", []):
+        if isinstance(item, dict):
+            _check(str(item.get("query") or ""))
+
+    if offenders:
+        raise ValueError(
+            "SCENE SAFETY GATE — one or more queries would surface a banned "
+            f"scene (crowd/group/multi-person/female subject): {offenders!r}. "
+            "Every query must depict exactly one male subject, alone."
+        )
+
+
 def _validate(data: dict) -> None:
     """Raise ValueError if ``data`` doesn't match the required schema."""
     required = {
@@ -593,6 +699,7 @@ def _validate(data: dict) -> None:
     # the real queries if too few.
     _normalize_query_list(data, "search_queries", config.SEARCH_QUERY_COUNT)
     _normalize_video_queries(data, config.VIDEO_QUERY_EXTRACT_COUNT)
+    _scene_safety_gate(data)
 
     window = data["clip_end"] - data["clip_start"]
     lo, hi = config.CLIP_WINDOW_MIN_SECONDS, config.CLIP_WINDOW_MAX_HARD_SECONDS

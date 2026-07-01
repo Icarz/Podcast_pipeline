@@ -66,7 +66,7 @@ Publish is then best-effort (R2 + YouTube); failures are logged but never fatal.
 
 ### Data contracts (what each module produces/consumes now)
 
-- `rss_ingest.pick_random_entry(feed_url, exclude_guids)` → `(feed, entry, metadata)` — random unused episode from the RSS window (used by `--auto`). `rss_ingest.fetch_latest(feed_url)` → `{"title", "audio_path", "description", "link"}` — always-latest, used by manual runs only.
+- `rss_ingest.pick_random_entry(feed_url, exclude_guids, host_name=None)` → `(feed, entry, metadata)` — random unused episode from the RSS window (used by `--auto`). `rss_ingest.fetch_latest(feed_url)` → `{"title", "audio_path", "description", "link"}` — always-latest, used by manual runs only. `host_name` (looked up from `config.PODCAST_HOSTS` by every call site) is threaded into the prescreen so a guest/interview episode — where the named host isn't even the one speaking — is rejected at the RSS stage, before any download/transcription. **Hard rule: if the named host isn't speaking, don't take the episode.** There's no speaker diarization, so this is enforced at the episode level (title + description via a cheap Haiku call), not by trying to detect host-vs-guest within a transcript.
 - `transcribe.transcribe(audio_path)` → `{"text", "segments":[{start,end,text}], "words":[{word,start,end}]}` (Groq `whisper-large-v3`, word + segment granularity).
 - `ai_extract.extract_highlights(transcript)` → validated JSON dict with exactly these keys:
   `hook, insights[3], best_quote, title, clip_start, clip_end, hashtags[3-8], image_prompts[4], search_queries[5], video_queries[5]`.
@@ -88,7 +88,9 @@ Every clip and carousel must serve at least one of these four outcomes for the v
 - **Hope + agency** — they leave feeling there is a path forward, not trapped
 - **Self-knowledge** — they learn something true about how humans (and therefore they) work
 
-The content universe is: human behavior, neurology, focus, motivation, identity, resilience, self-improvement, meaning. **Overthinking is a side-topic only** — never the primary theme. A clip that only diagnoses a problem without offering uplift, a new lens, or implied agency fails the brand. Banter, trivia, and entertainment anecdotes with no transferable insight are always rejected.
+The content universe is: human behavior, neurology, focus, motivation, identity, resilience, self-improvement, meaning, and money/wealth **when reframed as freedom or identity** (never personal-finance tips). **Overthinking is a side-topic only** — never the primary theme. A clip that only diagnoses a problem without offering uplift, a new lens, or implied agency fails the brand. Banter, trivia, and entertainment anecdotes with no transferable insight are always rejected.
+
+**Proven topic clusters (from the Jun 27 leaderboard, see performance data below):** fear/anxiety/rumination mechanisms are the single strongest recurring sub-topic (3 of the last 6 top performers) and should be actively favored within TIER 1 whenever present in a transcript; individuality-vs-conformity ("the courage to want more than the crowd finds acceptable") is a second proven cluster; money reframed as freedom is a validated third, newer cluster.
 
 When a podcast episode is centered on a theme already covered recently (e.g. overthinking, procrastination), the pipeline must search harder for a different angle buried deeper in the same episode — identity, meaning, perspective, resilience, or self-knowledge.
 
@@ -118,6 +120,25 @@ Production data from the same account (YouTube + TikTok + Instagram) showing 100
 - Hooks that could be YouTube tutorial titles ("Why X…", "The Y Trick…") get flagged by Shorts policy and die on TikTok too
 
 These findings drove: the HOOK RULES contrarian-identity-frame formula, the TIER 1 (dramatic landscape) scene priority default, DRAMATIC-NATURAL as the default palette, and the cover slide priority rule for `search_queries[0]`.
+
+**Updated Jun 27, 2026 — average view duration added (retention, not just raw views):**
+
+| Rank | Content | Views | Avg view duration | Duration % |
+|------|---------|-------|--------------------|-----------|
+| 1 | "Your Fear Is a GPS — Here's How to Read It" | **1,389** | 0:18 | 39.2% |
+| 2 | "Purpose of Money Is to Get Free! 7 Rules That Actually Work" | 1,190 | 0:31 | **61.1%** |
+| 3 | "You're Killing Your Dreams Just to Fit In" | 1,083 | 0:27 | 52.8% |
+| 4 | "You're Not Obsessed Enough" | 1,019 | 0:24 | 55.4% |
+| 5 | "Your Brain Is Addicted to Fake Scenarios" | 951 | 0:34 | **69.0%** |
+| 6 | "Your Brain Won't Let Go Until You Face It — Here's Why" | 931 | 0:34 | **68.0%** |
+
+**Key pattern — views and retention are DIFFERENT axes, and they diverge:**
+- The two neurological "Your Brain…" hooks have mediocre view counts (931-951, rank 5-6) but by far the **best retention** (68-69%, ~23s of a 34s clip). These are the most-trusted, best-converting hooks — the clip delivers exactly what the hook promises, immediately and concretely felt (addiction, refusal to let go), so almost nobody who clicks bails early. **This remains the default/priority hook pattern.**
+- "Your Fear Is a GPS" is the #1 video by raw views (1,389) but has by far the **worst retention** (39.2%, only ~7s of an 18s clip). A GPS-for-fear metaphor is a strong curiosity-gap hook (great CTR) but requires the viewer to do interpretive work to see the payoff — most clickers bail before the metaphor cashes out. **Lesson: an abstract/clever metaphor hook drives clicks but only pays off in retention if the clip's opening seconds immediately and concretely unpack what the metaphor MEANS in practice — don't let the metaphor sit unexplained.**
+- "Purpose of Money Is to Get Free! 7 Rules That Actually Work" **breaks the old "no listicle" hook ban outright** — it's a numbered-rules format — yet lands #2 in views AND #2 in retention (61.1%). The difference from a banned generic listicle ("7 tips for managing money") is that this hook is anchored to a deep IDENTITY-TRANSFORMATION stake (freedom) and frames the rules as a contrarian reveal ("that actually work" implies most rules people follow don't) rather than neutral information. **Lesson: numbered/listicle hooks are not universally banned — they work when the number is in service of an identity-stakes payoff (freedom, power, control), not generic self-help utility.**
+- "You're Killing Your Dreams Just to Fit In" and "You're Not Obsessed Enough" are solid, consistent all-arounders (mid-1000s views, ~53-55% retention) — the standard contrarian-identity-frame hook doing exactly what it's supposed to.
+
+These findings refined the HOOK RULES: the neurological "your brain/nervous system does X to you" frame stays the top-priority default (best retention, most reliable), a new "identity-stakes numbered rules" formula was added as a validated alternate structure, and a new rule requires metaphor-based hooks to be unpacked concretely within the clip's opening seconds rather than left abstract.
 
 ### Two distinct sets of AI-art-directed queries
 
@@ -191,6 +212,8 @@ Model IDs: Claude `claude-sonnet-4-6` (`config.EXTRACT_MODEL`), Groq `whisper-la
 ## Gotchas / current state
 
 - **Gemini image quota is effectively zero on this account** — `image_gen` hard-429s through its retry/model chain and falls back to local gradient PNGs. In practice Pexels stock video is the working background source; treat gradients as the safety net, not Gemini images.
+- **A suspected "whole-clip caption/audio desync" turned out to be a false positive from a flawed verification method — corrected here so it isn't re-litigated.** An investigation using `ffmpeg -vf fps=1/3` to bulk-sample frames appeared to show captions running ~1-1.5s ahead of the audio for an entire clip, which led to `MAX_CHUNK_SECONDS` being lowered from 1200 to 300 (kept — harmless, just more/shorter Groq requests) on the theory that Whisper's word-timestamps drift within a long single transcription request. A later re-verification using precise exact-seek frame extraction (`ffmpeg -ss T -frames:v 1`, not the `fps` filter) showed **perfect sub-100ms caption/audio sync throughout an entire clip**, including deep into it — directly contradicting the original finding. **The `fps` filter's output frame timestamps do not reliably correspond to simple multiples of the sampling interval starting at 0**; using it for precise sync verification was itself the bug. If a caption/audio sync issue is ever reported again, verify with exact-seek single-frame extraction, never `fps`-filter bulk sampling, before concluding there's a real desync.
+- **The real caption bug found during that same re-verification: out-of-order Whisper word timestamps can cause two caption blocks to render on top of each other.** Whisper occasionally emits a word with an earlier `start` than the word immediately before it in the transcript (confirmed case: word "that" timestamped before the preceding word "being", both correct in reading order). `video_gen.py`'s caption-clip loop assumes non-decreasing word start times when computing each word's on-screen window; an out-of-order word can start its caption clip before the previous word's clip has finished, producing a garbled overlap for a fraction of a second. Fixed at the source: `transcribe.transcribe()` now runs every returned `words` list through `_enforce_monotonic_words()`, which clamps each word's start/end to at least the previous word's end (in original text order — never reorders words, which would garble the sentence). This is now a guaranteed invariant of `transcribe()`'s return value.
 - **Background music is mixed at −18 dB** (`MUSIC_GAIN_DB`) under the full-volume voice, with 1.0s/1.5s fades. The single track lives at `assets/music/background.mp3`; if it's missing the render silently goes voice-only.
 - **Clip selection is completeness-first, but length-capped.** The extraction prompt forces a self-contained thought *with its payoff* (never a cliffhanger), within a 45-58s target and a hard 58s ceiling; the clip is snapped to real sentence boundaries via word timestamps. The 58s cap keeps the finished Short **under 60s** — at/above 60s YouTube blocks the Pixabay music bed on copyright grounds. If the model's best thought runs over, `_trim_to_cap` shortens it to a sentence boundary under the cap (it does not get rejected).
 - **Two query lists, two consumers** (see Architecture): `search_queries` (5, photos) feeds the slides; `video_queries` (5 = 4 primary + 1 spare, motion) feeds the video (4 slots, spare as fallback). Don't cross them.
