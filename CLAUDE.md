@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A podcast-to-short-form-video pipeline. For a randomly selected episode from a podcast RSS feed it:
-ingest → transcribe → AI clip plan → pick background → render a vertical karaoke-captioned MP4 (with a music bed) → render a 5-slide editorial carousel. Publish/upload stages are scaffolded but not wired in yet.
+ingest → transcribe → AI clip plan → pick background → render a vertical karaoke-captioned MP4 (with a music bed) → render a 6-slide editorial carousel. Publish/upload stages are scaffolded but not wired in yet.
 
 Windows-first (font paths, PowerShell setup, UTF-8 console shim). Python 3.12.
 
@@ -61,7 +61,7 @@ The `main.py` flow:
 2-3. `_load_or_build_plan(audio_path)` — transcribe + extract, cached together as `tmp/<basename>.plan.json`. Immediately after this step, `posted_history.mark_used()` retires the episode so it can never be re-selected, even if the YouTube upload later fails.
 4. `background.select_backgrounds(highlights)` — Pexels video → Gemini → gradient.
 5. `video_gen.build_video(...)` — the karaoke MP4.
-6. `slide_gen.build_slides(highlights)` — the 5-PNG carousel.
+6. `slide_gen.build_slides(highlights)` — the 6-PNG carousel.
 Publish is then best-effort (R2 + YouTube); failures are logged but never fatal.
 
 ### Data contracts (what each module produces/consumes now)
@@ -78,7 +78,7 @@ Publish is then best-effort (R2 + YouTube); failures are logged but never fatal.
   - **Query counts are normalized, never fatal:** `_normalize_query_list()` drops blanks/extras and pads by cycling, coercing `search_queries` to exactly 5 and `video_queries` to exactly 5 (4 primary + 1 spare), logging a warning when it adjusts. It only raises if a list is entirely empty.
 - `background.select_backgrounds(highlights)` → a **homogeneous** list of paths (all `.mp4` or all `.png`).
 - `video_gen.build_video(audio_path, words, highlights, podcast_name=, background_images=)` → output MP4 path.
-- `slide_gen.build_slides(highlights)` → list of 5 ordered PNG paths.
+- `slide_gen.build_slides(highlights)` → list of 6 ordered PNG paths (COVER, INSIGHT x3, QUOTE, FOLLOW).
 
 ### Content direction (the non-negotiable brand purpose)
 
@@ -183,9 +183,9 @@ The returned list is **homogeneous**: either all `.mp4` (video) or all `.png` (i
 
 ### slide_gen — separate editorial carousel (1080×1350, 4:5)
 
-`modules/slide_gen.py` renders a 5-slide Instagram carousel: **COVER (hook) → INSIGHT 01/02/03 → QUOTE**. This is a **4:5 portrait (1080×1350)** deck — a different aspect ratio from the 9:16 video, and a wholly separate artifact (the published clip is the karaoke video; the slides are not fed into it).
-- Each slide gets a **full-bleed Pexels PHOTO background** fetched per-slide via `pexels_bg.fetch_photo()` (cached as `tmp/slide_bg_<n>.jpg`), mapped 1:1 from `search_queries`. A flat black overlay + a vertical scrim that deepens over the text band keep copy legible; any slide whose photo can't be fetched degrades to the solid `#0D0D12` background.
-- Design system: yellow accent eyebrow with a tick bar, near-white auto-fitting body (`_fit_body` shrinks + re-wraps), giant ghosted serif insight numbers, persistent footer (wordmark + 5 progress dots). Fonts: bundled DejaVu in `assets/fonts/` (DejaVu Sans Bold / DejaVu Serif Bold) with Windows fallbacks.
+`modules/slide_gen.py` renders a 6-slide Instagram carousel: **COVER (hook) → INSIGHT 01/02/03 → QUOTE → FOLLOW (CTA)**. This is a **4:5 portrait (1080×1350)** deck — a different aspect ratio from the 9:16 video, and a wholly separate artifact (the published clip is the karaoke video; the slides are not fed into it).
+- Each of the first 5 slides gets a **full-bleed Pexels PHOTO background** fetched per-slide via `pexels_bg.fetch_photo()` (cached as `tmp/slide_bg_<n>.jpg`), mapped 1:1 from `search_queries`. A flat black overlay + a vertical scrim that deepens over the text band keep copy legible; any slide whose photo can't be fetched degrades to the solid `#0D0D12` background. The closing **FOLLOW** slide always uses the solid background (no photo query spent on it) with a "STAY IN THE LOOP" eyebrow and accent-colored "FOLLOW FOR MORE" body text.
+- Design system: yellow accent eyebrow with a tick bar, near-white auto-fitting body (`_fit_body` shrinks + re-wraps), giant ghosted serif insight numbers, persistent footer (wordmark + `TOTAL_SLIDES` (6) progress dots). Fonts: bundled DejaVu in `assets/fonts/` (DejaVu Sans Bold / DejaVu Serif Bold) with Windows fallbacks.
 - Quote attribution is rendered **only if** the highlights dict actually carries one (`_attribution()` checks keys like `quote_author`/`speaker`); the current `ai_extract` schema produces none, so the quote slide normally shows no attribution — we never invent a speaker.
 
 ### Caching to avoid burning API credits

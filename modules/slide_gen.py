@@ -1,16 +1,17 @@
 """Slide generation: editorial-style 4:5 portrait deck (Pillow).
 
-Renders a 5-slide Instagram carousel (1080x1350) for a short-form clip:
-    COVER (hook) -> INSIGHT 01/02/03 -> QUOTE
+Renders a 6-slide Instagram carousel (1080x1350) for a short-form clip:
+    COVER (hook) -> INSIGHT 01/02/03 -> QUOTE -> FOLLOW (CTA)
 
 Shared design system (see the constants block): dark #0D0D12 canvas, a yellow
-accent, near-white left-anchored body, a persistent footer (wordmark + 5
+accent, near-white left-anchored body, a persistent footer (wordmark + 6
 progress dots), DejaVu Sans Bold for body and DejaVu Serif Bold for the giant
 ghosted insight numbers. Body text auto-fits (shrink + re-wrap) into the safe
 area between the eyebrow and the footer so short and long insights both fit.
+The closing FOLLOW slide is a solid-background CTA (no photo query spent on it).
 
 Public contract is unchanged: ``build_slides(highlights) -> list[str]`` returns
-the 5 ordered PNG paths (consumed by main.py).
+the 6 ordered PNG paths (consumed by main.py).
 """
 
 import logging
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 # --- Canvas (Instagram 4:5 portrait; independent of the 9:16 video frame) ---
 W, H = 1080, 1350
+TOTAL_SLIDES = 6  # COVER, INSIGHT x3, QUOTE, FOLLOW
 
 # --- Palette ---
 BG = (13, 13, 18)          # #0D0D12 dark canvas
@@ -254,7 +256,7 @@ def _draw_body(draw: ImageDraw.ImageDraw, lines: list[str], font: ImageFont.Free
         y += lh
 
 
-def _draw_footer(draw: ImageDraw.ImageDraw, active: int, total: int = 5) -> None:
+def _draw_footer(draw: ImageDraw.ImageDraw, active: int, total: int = TOTAL_SLIDES) -> None:
     """Wordmark bottom-left + ``total`` progress dots bottom-right (``active`` yellow)."""
     _draw_tracked(draw, LEFT, FOOTER_CY, config.BRAND_NAME.upper(), _sans(FOOTER_SIZE),
                   MUTED, FOOTER_TRACKING, anchor="lm", stroke_width=TEXT_STROKE_W)
@@ -333,6 +335,27 @@ def _render_quote(path: str, quote: str, attribution: str | None, idx: int, bg_p
                 "photo" if bg_path else "solid", ", attributed" if attribution else "")
 
 
+def _render_cta(path: str, idx: int) -> None:
+    """Closing 'follow for more' CTA slide. Solid brand background, no photo query."""
+    eb_h = _eyebrow_block_h()
+    text = "FOLLOW FOR MORE"
+
+    font, lines, lh = _fit_body(_measure_draw(), text, BODY_W, SAFE_H - eb_h - EYEBROW_GAP)
+    block_h = eb_h + EYEBROW_GAP + lh * len(lines)
+    top = SAFE_TOP + (SAFE_H - block_h) // 2
+
+    img, draw = _photo_canvas(None, top, top + block_h)
+    _draw_eyebrow(draw, "STAY IN THE LOOP", top)
+    y = top + eb_h + EYEBROW_GAP
+    for line in lines:
+        draw.text((LEFT, y), line, font=font, fill=ACCENT, anchor="la",
+                  stroke_width=TEXT_STROKE_W, stroke_fill=TEXT_STROKE)
+        y += lh
+    _draw_footer(draw, idx)
+    img.save(path)
+    logger.info("Rendered slide: %s (cta)", os.path.basename(path))
+
+
 # Optional attribution keys the extraction MIGHT carry. The current ai_extract
 # schema produces none of these, so the quote slide shows no attribution unless
 # a real one is present — we never invent a speaker.
@@ -380,10 +403,11 @@ def _fetch_slide_backgrounds(queries: list[str], n_insights: int, force: bool) -
 def build_slides(highlights: dict, force: bool = False) -> list[str]:
     """Render the editorial deck on full-bleed Pexels photo backgrounds.
 
-    Order: COVER (hook), INSIGHT 01-03 (insights), QUOTE (best_quote).
+    Order: COVER (hook), INSIGHT 01-03 (insights), QUOTE (best_quote), FOLLOW (CTA).
     Requires keys: hook, insights (>=1, uses up to 3), best_quote. Uses
     search_queries for the photo backgrounds; each slide degrades to the solid
-    dark background if its photo can't be fetched. ``force`` re-downloads photos.
+    dark background if its photo can't be fetched. The closing FOLLOW slide is
+    always solid background. ``force`` re-downloads photos.
     """
     os.makedirs(config.SLIDE_DIR, exist_ok=True)
 
@@ -409,6 +433,9 @@ def build_slides(highlights: dict, force: bool = False) -> list[str]:
         _render_insight(_path(i), n, insight, idx=i, bg_path=bgs[i])
     qi = len(paths)
     _render_quote(_path(qi), quote, _attribution(highlights), idx=qi, bg_path=bgs[qi])
+
+    ci = len(paths)
+    _render_cta(_path(ci), idx=ci)
 
     logger.info("Built %d slides in %s", len(paths), config.SLIDE_DIR)
     return paths
