@@ -1156,12 +1156,16 @@ def extract_highlights(transcript: dict) -> dict:
         _trim_to_cap(parsed, words)
     _validate(parsed)
     _brand_gate(parsed)
-    _content_gate(parsed, transcript)
 
     # Snap onto real sentence boundaries so the clip never cuts a word in half
     # and never opens/ends mid-thought, then re-extend/re-cap: snapping clip_start
     # later can drop the window back under the floor, and snapping it earlier can
-    # nudge it back over the ceiling.
+    # nudge it back over the ceiling. This MUST happen before _content_gate: the
+    # gate reads the actual clip words and judges whether the segment "lands its
+    # payoff" — judging the pre-snap window means it's reading text that may end
+    # mid-sentence/mid-word (Whisper segment boundaries don't align to sentences),
+    # which reads as an unlanded payoff even when snapping would have fixed it two
+    # steps later. The gate must see the SAME text the render will actually use.
     if words:
         _snap_to_sentences(parsed, words)
         _extend_to_floor(parsed, words, segments or [])
@@ -1172,6 +1176,8 @@ def extract_highlights(transcript: dict) -> dict:
                 "Snapped clip window %.1fs exceeds hard max %ds",
                 window, config.CLIP_WINDOW_MAX_HARD_SECONDS,
             )
+
+    _content_gate(parsed, transcript)
 
     logger.info("Extracted clip: %.1f-%.1fs | title=%r", parsed["clip_start"], parsed["clip_end"], parsed["title"])
     return parsed
