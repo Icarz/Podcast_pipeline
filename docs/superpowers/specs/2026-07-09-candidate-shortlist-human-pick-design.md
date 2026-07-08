@@ -147,10 +147,22 @@ def _pick_episode_and_candidate(feed_arg: str) -> tuple[dict, dict, dict]:
 
 `run()` calls this instead of `pick_random_entry` + the extraction half of
 `_load_or_build_plan`, then calls `ai_extract.extract_copy_with_retry(...)`
-for Stage 2. Transcript caching (`*.plan.json`) is unchanged — Groq is still
-hit once per episode even across multiple candidate-reject loops. Stage 1/2
-extraction calls are NOT cached (a rejected/re-viewed episode should get a
-fresh candidate scan, not a stale one).
+for Stage 2. `_load_or_build_plan` is split accordingly:
+
+- `_load_or_build_transcript(audio_path)` — transcribe-only, cached exactly
+  like today's transcribe half (Groq hit once per episode, reused across
+  candidate-reject loops within the same run).
+- The **final** `*.plan.json` (`{transcript, highlights}`) is written only
+  once, **after Stage 2 succeeds** for the approved candidate — same format
+  and same cache-hit short-circuit as today, so re-running the same episode
+  (e.g. via the `video_gen` harness, or a second manual run before the
+  episode is published) skips straight past both Stage 1 and Stage 2 and
+  reuses the approved highlights, with no re-prompt.
+- What is NOT cached: Stage 1's raw candidate list, and anything for a
+  rejected episode. If `*.plan.json` is deleted and the same episode is
+  re-run from scratch, it gets a fresh candidate scan (which may differ, per
+  the existing documented non-determinism of extraction) rather than
+  replaying the old shortlist.
 
 A rejected episode is retired via the existing `posted_history.mark_used()` —
 no new state, no schema change. Per the user: *"if it's working for me, it's
