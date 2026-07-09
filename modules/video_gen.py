@@ -635,7 +635,14 @@ if __name__ == "__main__":
     else:
         print(f"Transcribing: {os.path.basename(audio_path)}", flush=True)
         transcript = transcribe.transcribe(audio_path)
-        highlights = ai_extract.extract_highlights_with_retry(transcript)
+        candidates = ai_extract.find_candidates(transcript)
+        survivors = ai_extract.filter_candidates(candidates, transcript)
+        if not survivors:
+            raise SystemExit("No candidates survived filtering for this episode.")
+        top = survivors[0]
+        highlights = ai_extract.extract_copy_with_retry(
+            transcript, top["clip_start"], top["clip_end"], top,
+        )
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump({"transcript": transcript, "highlights": highlights}, f)
 
@@ -645,8 +652,10 @@ if __name__ == "__main__":
     vq = highlights.get("video_queries")
     stale_vq = not vq or not all(isinstance(v, dict) for v in vq)
     if "search_queries" not in highlights or stale_vq:
-        print("Cached plan missing/old search_queries/video_queries; regenerating extraction...", flush=True)
-        highlights = ai_extract.extract_highlights_with_retry(transcript)
+        print("Cached plan missing/old search_queries/video_queries; regenerating copy for the same window...", flush=True)
+        highlights = ai_extract.extract_copy_with_retry(
+            transcript, highlights["clip_start"], highlights["clip_end"], seed={},
+        )
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump({"transcript": transcript, "highlights": highlights}, f)
 
