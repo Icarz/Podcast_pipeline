@@ -26,6 +26,7 @@ import os
 import sys
 from datetime import date
 
+import anthropic
 from dotenv import load_dotenv
 
 import config
@@ -350,7 +351,7 @@ def run(
                 highlights = ai_extract.extract_copy_with_retry(
                     transcript, candidate["clip_start"], candidate["clip_end"], candidate,
                 )
-            except Exception as exc:  # noqa: BLE001 - Stage 2 exhaustion must fall back, not crash the run
+            except (ValueError, anthropic.RateLimitError) as exc:
                 logger.warning(
                     "Stage 2 copy extraction failed for %r (%s); retiring episode "
                     "and trying another candidate/episode", episode.get("title"), exc,
