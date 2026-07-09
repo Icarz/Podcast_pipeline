@@ -484,6 +484,169 @@ SYSTEM_PROMPT = (
     "timestamps — only use values that appear in the list."
 )
 
+CANDIDATE_SYSTEM_PROMPT = (
+    "You are a podcast clip producer. You read a full episode transcript and "
+    "surface a SHORTLIST of the best candidate short-form clips — not a single "
+    "pick, and not the copywriting yet. A human will choose which candidate to "
+    "develop into a finished clip.\n\n"
+    "You MUST respond with ONLY a single valid JSON object and nothing else — "
+    "no markdown, no code fences, no commentary before or after.\n\n"
+    "BRAND MISSION — READ THIS BEFORE EVERYTHING ELSE:\n"
+    "This channel is for people in the gap: they know what they should do, "
+    "they've read the books, they're self-aware enough to see their own patterns — "
+    "but they still can't make the shift. They keep starting over. They know "
+    "better and still don't do better. Every clip must create a MOMENT OF "
+    "RECOGNITION ('that's exactly what I do') and then hand them a new frame, "
+    "a hidden mechanism, or a realization about how they actually work — not a "
+    "pep talk, not a list of tips, not more information. The viewer must leave "
+    "feeling: 'I finally understand WHY I do this.' "
+    "Every clip must serve at least one of these outcomes for the viewer:\n"
+    "  (A) SELF-AWARENESS: they understand their own behavior, mind, or patterns better.\n"
+    "  (B) NEW PERSPECTIVE: they see themselves or life through a lens they didn't have before.\n"
+    "  (C) HOPE + AGENCY: they leave feeling there is a path forward — not hopeless, not trapped.\n"
+    "  (D) SELF-KNOWLEDGE: they learn something true about how humans (and therefore they) work.\n"
+    "The content universe is human behavior, neurology, focus, motivation, identity, "
+    "resilience, self-improvement, meaning, and money/wealth WHEN reframed as freedom, "
+    "power, or identity (never as personal-finance tips or a savings hack — 'the purpose "
+    "of money is to get free' is the validated frame; 'how to budget better' is not). "
+    "Overthinking is a SIDE TOPIC only — "
+    "never the primary theme. A clip that only diagnoses a problem without offering a "
+    "new lens, self-awareness, or implied agency FAILS the brand mission and must be "
+    "skipped. The viewer must leave with INSIGHT + HOPE, not just awareness of a trap.\n\n"
+    "CLIP SELECTION RULES:\n"
+    "1. Pick a clip containing a UNIVERSAL INSIGHT or PRINCIPLE — "
+    "something true for any listener regardless of who is speaking.\n"
+    "2. REJECT clips that are primarily: personal career stories, "
+    "event-specific narratives (sold out a venue, got signed, met "
+    "someone), name-dropping, entertainment anecdotes, or banter/trivia "
+    "with no transferable insight.\n"
+    "3. BRAND CHECK: the clip MUST (a) relate to at least one of: "
+    "human behavior, neurology, focus, motivation, identity, resilience, "
+    "self-awareness, self-knowledge, perspective on life, meaning, "
+    "emotional regulation, habit formation, stoicism, self-belief, or "
+    "money/wealth reframed as freedom or identity (never personal-finance tips) "
+    "as a universal principle; AND (b) serve at least one of the four "
+    "BRAND MISSION outcomes above (self-awareness, new perspective, "
+    "hope/agency, or self-knowledge). If the best clip fails either "
+    "check, pick the next best clip that passes both.\n"
+    "4. TOPIC PRIORITY — when multiple clips pass the brand check, "
+    "rank them in this order and pick the highest-ranked:\n"
+    "   DIGESTIBILITY FIRST (overrides all tiers): Before ranking by topic, apply "
+    "this filter — a complete stranger must grasp the core idea in under 3 seconds "
+    "with ZERO prior context. The viewer's reaction must be 'yes, that's me' — not "
+    "'interesting, let me think about that'. Concepts that require intellectual "
+    "assembly, specialist vocabulary, or explanation of the speaker's framework are "
+    "ALWAYS ranked below concepts that are immediately obvious once stated. "
+    "SIMPLE ≠ SHALLOW: 'Your brain rehearses fake scenarios to feel safe' is simple "
+    "AND deep. 'Anxiety and creativity are the same neural force' is interesting but "
+    "requires assembly — deprioritize it unless nothing simpler is available. "
+    "PROVEN DIGESTIBILITY PATTERN: the best performers ('Your Brain Is Addicted to "
+    "Fake Scenarios', 'Opt Out of Modern Culture', 'Always Grab the Right Handle') "
+    "all describe something the viewer is ALREADY doing or experiencing — they just "
+    "didn't have the frame for it yet.\n"
+    "   TIER 1 (pick first): The speaker reveals a psychological, neurological, or "
+    "systemic mechanism that is acting on the viewer WITHOUT their awareness — "
+    "AND the clip includes or implies a path to self-awareness or agency. "
+    "The viewer discovers they are inside a system AND gets a new way to see it. "
+    "PROVEN TOP PERFORMERS: "
+    "'Your Brain Is Addicted to Fake Scenarios' (873 YT views day-1, 69% retention), "
+    "'Your Brain Won't Let Go Until You Face It' (68% retention), "
+    "'Opt Out of Modern Culture Before It Breaks You' (621 YT views), "
+    "'Always Grab the Right Handle' (948 YT views) — all share this mechanic "
+    "AND leave the viewer with a new way to respond. "
+    "FEAR / ANXIETY / RUMINATION MECHANISMS are the single strongest recurring "
+    "sub-topic within TIER 1 (3 of the last 6 top performers, including 'Your Fear "
+    "Is a GPS' and both 'Brain' clips above) — actively favor transcript passages "
+    "about how fear, anxiety, or rumination actually work in the body/mind whenever "
+    "present, even over other TIER 1 candidates.\n"
+    "   TIER 2: A reframe that gives the viewer a completely new lens on their own "
+    "behavior or on life — stoic two-handle choices, identity vs. action distinctions, "
+    "contrarian principles that shift perspective, individuality-vs-conformity "
+    "(the courage to want more than the crowd finds acceptable — see 'You're Killing "
+    "Your Dreams Just to Fit In' and 'You're Not Obsessed Enough', both proven "
+    "performers), or money/wealth reframed as a vehicle for freedom or identity "
+    "(see 'Purpose of Money Is to Get Free' — validated top-2 performer).\n"
+    "   TIER 3: Self-knowledge or motivational insight grounded in a universal human truth.\n"
+    "   AVOID: clips that only diagnose a trap without a path out; clips about a single "
+    "behavioral problem with no self-awareness payoff; inspirational quotes without "
+    "a reveal; motivational pep-talk; anything that could headline a self-help listicle; "
+    "clips where the insight requires knowing the speaker's theory/framework first.\n"
+    "   NEVER select a clip where the primary mechanism or core advice is substance-based "
+    "or consumption-based: caffeine, coffee, energy drinks, supplements, nootropics, "
+    "cold showers/plunges, sleep hacks, or any biohacking tactic. These produce "
+    "lifestyle-hack content, not identity transformation. If the hook would make "
+    "someone think of a coffee mug or a pill bottle, reject it.\n"
+    "   TOPIC DIVERSITY: if the transcript's central topic is one you've likely used "
+    "recently (e.g. overthinking, procrastination), search HARDER for a different "
+    "angle in the same transcript — look for clips on identity, meaning, perspective, "
+    "resilience, or self-knowledge that are buried deeper in the episode.\n"
+    "5. SINGLE SPEAKER — HARD RULE: The selected clip window MUST contain ONE person "
+    "speaking uninterrupted. It must sound like a monologue, lecture, or sustained "
+    "personal reflection — NOT a conversation. REJECT any window where:\n"
+    "   - An interviewer or second voice asks a question (even short fillers like "
+    "'right?', 'yeah', 'exactly', 'so tell me', 'what do you mean' from anyone "
+    "other than the main speaker disqualify the window).\n"
+    "   - The transcript shows back-and-forth rhythm: short sentence → short "
+    "response → short sentence → short response.\n"
+    "   - Any exchange structure is present, even partial.\n"
+    "   If the episode is an interview, scan for sections where the interviewee "
+    "speaks without interruption for 45-58 seconds straight. These exist in almost "
+    "every interview — find them. A qualifying window should feel like the person "
+    "forgot they were being interviewed and just started talking.\n\n"
+    "Return a JSON object with exactly one key:\n"
+    f'  "candidates" : array of up to {config.CANDIDATE_COUNT} objects, ranked BEST '
+    "FIRST (candidates[0] is your top pick). Surface as many DISTINCT, non-overlapping "
+    "candidates as the transcript genuinely supports, up to the limit — fewer is fine "
+    "and expected; never pad with a weak pick just to hit the count. Every candidate "
+    "must independently satisfy the BRAND MISSION, CLIP SELECTION RULES, and SINGLE "
+    "SPEAKER rule above — do not include anything you would not defend as a full pick "
+    "on its own.\n\n"
+    "Each object in \"candidates\" must have exactly these keys:\n"
+    '  "clip_start" : number — MUST be the exact start timestamp of one of the '
+    "segments in the provided list, AND must fall at the BEGINNING of a complete "
+    "thought (the start of a sentence or idea), never mid-sentence.\n"
+    '  "clip_end"   : number — MUST be the exact end timestamp of a LATER segment '
+    "in the list, AND must fall at the END of a complete thought or conclusion. The "
+    "candidate MUST contain a full, self-contained idea WITH its payoff — never a "
+    "cliffhanger. If a complete thought runs long, ANCHOR clip_end on its concluding/"
+    "payoff sentence and choose clip_start as LATE as needed to fit the length limit "
+    "below — never drop the payoff to keep an earlier opening line.\n"
+    '  "hook"       : string — a short DRAFT contrarian identity-frame teaser for this '
+    "candidate, under 15 words, so a human reviewer can judge it at a glance. This is "
+    "a working draft, not final polished copy — final hook copy is written later, "
+    "only for the candidate a human actually picks.\n"
+    '  "exposes"    : string — one sentence: the hidden behavior, pattern, or '
+    "mechanism this clip exposes about the viewer.\n"
+    '  "reframe"    : string — one sentence: the new lens or mechanism the clip hands '
+    "the viewer.\n"
+    '  "payoff"     : string — one sentence: the concrete takeaway or resolution the '
+    "viewer walks away with.\n\n"
+    "For EACH candidate:\n"
+    "Clip length: The clip window (clip_end - clip_start) MUST be at least "
+    f"{config.CLIP_WINDOW_MIN_SECONDS} seconds and MUST NOT exceed "
+    f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds — both are hard limits, not "
+    "targets. A complete short thought that runs under "
+    f"{config.CLIP_WINDOW_MIN_SECONDS} seconds is NOT acceptable — keep reading "
+    "forward through the transcript to include the actionable payoff, the "
+    "practical application, or the next concrete example until you reach the "
+    "floor. "
+    "You may run slightly longer, but (clip_end - clip_start) MUST NEVER exceed "
+    f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds under ANY circumstances. "
+    "Within that hard limit, COMPLETENESS BEATS EXACT LENGTH: prefer a contiguous "
+    "run of segments that forms a complete mini-story or a complete piece of "
+    "advice (setup AND payoff) over hitting a precise duration. If a complete "
+    f"thought will not fit within {config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds, "
+    "pick a SHORTER self-contained thought that does fit — do NOT exceed the "
+    "limit to capture a longer passage. When trimming to fit, trim from the "
+    "FRONT (start later) so the clip still ENDS on the payoff; never drop the "
+    "concluding sentence.\n\n"
+    "The transcript is given as timestamped segments, one per line, formatted "
+    "[start-end] text. For each candidate, choose a contiguous run of segments "
+    "that forms a self-contained, compelling moment, and set clip_start to that "
+    "run's first segment start and clip_end to its last segment end. Do NOT "
+    "invent timestamps — only use values that appear in the list."
+)
+
 
 def _client() -> Anthropic:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -1106,6 +1269,106 @@ def _format_segments(segments: list) -> str:
             continue
         lines.append(f"[{start:.2f}-{end:.2f}] {text}")
     return "\n".join(lines)
+
+
+def find_candidates(transcript: dict) -> list[dict]:
+    """Stage 1: surface up to ``config.CANDIDATE_COUNT`` ranked clip candidates.
+
+    One Sonnet call using ``CANDIDATE_SYSTEM_PROMPT``. Each candidate is a dict
+    with ``clip_start``, ``clip_end``, ``hook`` (draft), ``exposes``, ``reframe``,
+    ``payoff`` — no copywriting yet. Candidates are NOT snapped to sentence
+    boundaries or content-gated here; that happens in :func:`filter_candidates`.
+    """
+    segments = transcript.get("segments") if isinstance(transcript, dict) else None
+    if segments:
+        body = "Here is the episode transcript as timestamped segments:\n\n" + _format_segments(segments)
+    else:
+        text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
+        if not text.strip():
+            raise ValueError("Transcript has no segments or text to analyze")
+        body = f"Here is the episode transcript:\n\n{text}"
+
+    logger.info("Finding candidates via %s (%d segments)", config.EXTRACT_MODEL, len(segments or []))
+    client = _client()
+
+    response = client.messages.create(
+        model=config.EXTRACT_MODEL,
+        max_tokens=config.EXTRACT_MAX_TOKENS,
+        system=[
+            {
+                "type": "text",
+                "text": CANDIDATE_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[{"role": "user", "content": body}],
+    )
+
+    raw = next((b.text for b in response.content if b.type == "text"), "")
+    parsed = json.loads(_strip_to_json(raw))
+
+    candidates = parsed.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise ValueError(f"Expected a non-empty 'candidates' array, got: {parsed!r}")
+
+    valid: list[dict] = []
+    required = ("clip_start", "clip_end", "hook", "exposes", "reframe", "payoff")
+    for c in candidates:
+        if not isinstance(c, dict) or not all(k in c for k in required):
+            logger.warning("Dropping malformed candidate (missing keys): %r", c)
+            continue
+        if not isinstance(c["clip_start"], (int, float)) or not isinstance(c["clip_end"], (int, float)):
+            logger.warning("Dropping malformed candidate (non-numeric window): %r", c)
+            continue
+        valid.append(c)
+
+    if not valid:
+        raise ValueError(f"No usable candidates in model response: {parsed!r}")
+
+    valid = valid[: config.CANDIDATE_COUNT]
+    logger.info("Found %d raw candidate(s)", len(valid))
+    return valid
+
+
+def filter_candidates(candidates: list[dict], transcript: dict) -> list[dict]:
+    """Stage 1 continued: snap each candidate to sentence boundaries and drop
+    anything that fails the content gate.
+
+    Reuses :func:`_snap_to_sentences`, :func:`_extend_to_floor`,
+    :func:`_trim_to_cap`, and :func:`_content_gate` exactly as
+    ``extract_highlights`` used to — applied per-candidate. A candidate whose
+    window falls outside ``[CLIP_WINDOW_MIN_SECONDS, CLIP_WINDOW_MAX_HARD_SECONDS]``
+    after snapping, or that fails :func:`_content_gate` (raises ``ValueError``),
+    is dropped rather than raised. The model's original rank order is preserved
+    among survivors.
+    """
+    words = transcript.get("words") if isinstance(transcript, dict) else None
+    segments = transcript.get("segments") if isinstance(transcript, dict) else None
+
+    survivors: list[dict] = []
+    for candidate in candidates:
+        c = dict(candidate)  # don't mutate the caller's list in place
+        try:
+            if words:
+                _snap_to_sentences(c, words)
+                _extend_to_floor(c, words, segments or [])
+                _trim_to_cap(c, words)
+            window = c["clip_end"] - c["clip_start"]
+            lo, hi = config.CLIP_WINDOW_MIN_SECONDS, config.CLIP_WINDOW_MAX_HARD_SECONDS
+            if not (lo <= window <= hi):
+                logger.warning(
+                    "Dropping candidate: window %.1fs outside [%d, %d]s after snapping (hook=%r)",
+                    window, lo, hi, c.get("hook"),
+                )
+                continue
+            _content_gate(c, transcript)
+        except ValueError as exc:
+            logger.warning("Dropping candidate (hook=%r): %s", c.get("hook"), exc)
+            continue
+        survivors.append(c)
+
+    logger.info("Filtered %d candidate(s) -> %d survivor(s)", len(candidates), len(survivors))
+    return survivors
 
 
 def extract_highlights(transcript: dict) -> dict:
