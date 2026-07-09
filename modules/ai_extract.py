@@ -20,9 +20,11 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = (
+CANDIDATE_SYSTEM_PROMPT = (
     "You are a podcast clip producer. You read a full episode transcript and "
-    "select the single best short-form clip plus social copy.\n\n"
+    "surface a SHORTLIST of the best candidate short-form clips — not a single "
+    "pick, and not the copywriting yet. A human will choose which candidate to "
+    "develop into a finished clip.\n\n"
     "You MUST respond with ONLY a single valid JSON object and nothing else — "
     "no markdown, no code fences, no commentary before or after.\n\n"
     "BRAND MISSION — READ THIS BEFORE EVERYTHING ELSE:\n"
@@ -127,6 +129,67 @@ SYSTEM_PROMPT = (
     "speaks without interruption for 45-58 seconds straight. These exist in almost "
     "every interview — find them. A qualifying window should feel like the person "
     "forgot they were being interviewed and just started talking.\n\n"
+    "Return a JSON object with exactly one key:\n"
+    f'  "candidates" : array of up to {config.CANDIDATE_COUNT} objects, ranked BEST '
+    "FIRST (candidates[0] is your top pick). Surface as many DISTINCT, non-overlapping "
+    "candidates as the transcript genuinely supports, up to the limit — fewer is fine "
+    "and expected; never pad with a weak pick just to hit the count. Every candidate "
+    "must independently satisfy the BRAND MISSION, CLIP SELECTION RULES, and SINGLE "
+    "SPEAKER rule above — do not include anything you would not defend as a full pick "
+    "on its own.\n\n"
+    "Each object in \"candidates\" must have exactly these keys:\n"
+    '  "clip_start" : number — MUST be the exact start timestamp of one of the '
+    "segments in the provided list, AND must fall at the BEGINNING of a complete "
+    "thought (the start of a sentence or idea), never mid-sentence.\n"
+    '  "clip_end"   : number — MUST be the exact end timestamp of a LATER segment '
+    "in the list, AND must fall at the END of a complete thought or conclusion. The "
+    "candidate MUST contain a full, self-contained idea WITH its payoff — never a "
+    "cliffhanger. If a complete thought runs long, ANCHOR clip_end on its concluding/"
+    "payoff sentence and choose clip_start as LATE as needed to fit the length limit "
+    "below — never drop the payoff to keep an earlier opening line.\n"
+    '  "hook"       : string — a short DRAFT contrarian identity-frame teaser for this '
+    "candidate, under 15 words, so a human reviewer can judge it at a glance. This is "
+    "a working draft, not final polished copy — final hook copy is written later, "
+    "only for the candidate a human actually picks.\n"
+    '  "exposes"    : string — one sentence: the hidden behavior, pattern, or '
+    "mechanism this clip exposes about the viewer.\n"
+    '  "reframe"    : string — one sentence: the new lens or mechanism the clip hands '
+    "the viewer.\n"
+    '  "payoff"     : string — one sentence: the concrete takeaway or resolution the '
+    "viewer walks away with.\n\n"
+    "For EACH candidate:\n"
+    "Clip length: The clip window (clip_end - clip_start) MUST be at least "
+    f"{config.CLIP_WINDOW_MIN_SECONDS} seconds and MUST NOT exceed "
+    f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds — both are hard limits, not "
+    "targets. A complete short thought that runs under "
+    f"{config.CLIP_WINDOW_MIN_SECONDS} seconds is NOT acceptable — keep reading "
+    "forward through the transcript to include the actionable payoff, the "
+    "practical application, or the next concrete example until you reach the "
+    "floor. "
+    "You may run slightly longer, but (clip_end - clip_start) MUST NEVER exceed "
+    f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds under ANY circumstances. "
+    "Within that hard limit, COMPLETENESS BEATS EXACT LENGTH: prefer a contiguous "
+    "run of segments that forms a complete mini-story or a complete piece of "
+    "advice (setup AND payoff) over hitting a precise duration. If a complete "
+    f"thought will not fit within {config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds, "
+    "pick a SHORTER self-contained thought that does fit — do NOT exceed the "
+    "limit to capture a longer passage. When trimming to fit, trim from the "
+    "FRONT (start later) so the clip still ENDS on the payoff; never drop the "
+    "concluding sentence.\n\n"
+    "The transcript is given as timestamped segments, one per line, formatted "
+    "[start-end] text. For each candidate, choose a contiguous run of segments "
+    "that forms a self-contained, compelling moment, and set clip_start to that "
+    "run's first segment start and clip_end to its last segment end. Do NOT "
+    "invent timestamps — only use values that appear in the list."
+)
+
+COPY_SYSTEM_PROMPT = (
+    "You are a podcast clip producer writing the social copy and visual "
+    "art-direction for an ALREADY-CHOSEN short-form clip. The clip's transcript "
+    "window has already been picked by a human — you do not choose it and must "
+    "not change it. Your job is the copywriting and art-direction package only.\n\n"
+    "You MUST respond with ONLY a single valid JSON object and nothing else — "
+    "no markdown, no code fences, no commentary before or after.\n\n"
     "HOOK RULES — these determine 90% of whether the clip gets views.\n\n"
     "The hook MUST use a CONTRARIAN IDENTITY FRAME. It must challenge the viewer's "
     "current behavior or worldview and imply they are on the wrong side of a divide. "
@@ -234,18 +297,6 @@ SYSTEM_PROMPT = (
     "  - BAD: 'When you don't sleep enough, you have physiological signals to eat more'\n"
     "  - GOOD: 'You grab the handle that makes you stronger — not the one that strips you of agency'\n"
     '  "title"       : string — a punchy video title (<= 80 chars).\n'
-    '  "clip_start"  : number — MUST be the exact start timestamp of one of the '
-    "segments in the provided list, AND must fall at the BEGINNING of a complete "
-    "thought (the start of a sentence or idea), never mid-sentence.\n"
-    '  "clip_end"    : number — MUST be the exact end timestamp of a LATER segment '
-    "in the list, AND must fall at the END of a complete thought or conclusion. "
-    "The clip MUST contain a full, self-contained idea WITH its payoff. NEVER cut "
-    "off mid-sentence, and NEVER end on a setup/cliffhanger such as \"...this is "
-    "what I want you to do\" or \"...here's the thing\" without the actual point "
-    "that follows. The last segment must deliver the resolution, not tee it up. "
-    "If a complete thought runs long, ANCHOR clip_end on its concluding/payoff "
-    "sentence and choose clip_start as LATE as needed to fit the length limit — "
-    "never drop the payoff to keep an earlier opening line.\n"
     '  "hashtags"    : array of strings — 3 to 8 relevant hashtags, each '
     'starting with "#".\n'
     '  "image_prompts": array of exactly 4 strings — cinematic visual '
@@ -459,192 +510,11 @@ SYSTEM_PROMPT = (
     '{"keyword": "freedom", "query": "person arms open cliff edge sunrise"}, '
     '{"keyword": "clarity", "query": "lone figure mountain summit golden hour"}]\n'
     "Each query is derived from its quarter's specific concept — not from a list.\n\n"
-    "Clip length: The clip window (clip_end - clip_start) MUST be at least "
-    f"{config.CLIP_WINDOW_MIN_SECONDS} seconds and MUST NOT exceed "
-    f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds — both are hard limits, not "
-    "targets. A complete short thought that runs under "
-    f"{config.CLIP_WINDOW_MIN_SECONDS} seconds is NOT acceptable — keep reading "
-    "forward through the transcript to include the actionable payoff, the "
-    "practical application, or the next concrete example until you reach the "
-    "floor. "
-    "You may run slightly longer, but (clip_end - clip_start) MUST NEVER exceed "
-    f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds under ANY circumstances. "
-    "Within that hard limit, COMPLETENESS BEATS EXACT LENGTH: prefer a contiguous "
-    "run of segments that forms a complete mini-story or a complete piece of "
-    "advice (setup AND payoff) over hitting a precise duration. If a complete "
-    f"thought will not fit within {config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds, "
-    "pick a SHORTER self-contained thought that does fit — do NOT exceed the "
-    "limit to capture a longer passage. When trimming to fit, trim from the "
-    "FRONT (start later) so the clip still ENDS on the payoff; never drop the "
-    "concluding sentence.\n\n"
-    "The transcript is given as timestamped segments, one per line, formatted "
-    "[start-end] text. Choose a contiguous run of segments that forms a "
-    "self-contained, compelling moment, and set clip_start to that run's first "
-    "segment start and clip_end to its last segment end. Do NOT invent "
-    "timestamps — only use values that appear in the list."
-)
-
-CANDIDATE_SYSTEM_PROMPT = (
-    "You are a podcast clip producer. You read a full episode transcript and "
-    "surface a SHORTLIST of the best candidate short-form clips — not a single "
-    "pick, and not the copywriting yet. A human will choose which candidate to "
-    "develop into a finished clip.\n\n"
-    "You MUST respond with ONLY a single valid JSON object and nothing else — "
-    "no markdown, no code fences, no commentary before or after.\n\n"
-    "BRAND MISSION — READ THIS BEFORE EVERYTHING ELSE:\n"
-    "This channel is for people in the gap: they know what they should do, "
-    "they've read the books, they're self-aware enough to see their own patterns — "
-    "but they still can't make the shift. They keep starting over. They know "
-    "better and still don't do better. Every clip must create a MOMENT OF "
-    "RECOGNITION ('that's exactly what I do') and then hand them a new frame, "
-    "a hidden mechanism, or a realization about how they actually work — not a "
-    "pep talk, not a list of tips, not more information. The viewer must leave "
-    "feeling: 'I finally understand WHY I do this.' "
-    "Every clip must serve at least one of these outcomes for the viewer:\n"
-    "  (A) SELF-AWARENESS: they understand their own behavior, mind, or patterns better.\n"
-    "  (B) NEW PERSPECTIVE: they see themselves or life through a lens they didn't have before.\n"
-    "  (C) HOPE + AGENCY: they leave feeling there is a path forward — not hopeless, not trapped.\n"
-    "  (D) SELF-KNOWLEDGE: they learn something true about how humans (and therefore they) work.\n"
-    "The content universe is human behavior, neurology, focus, motivation, identity, "
-    "resilience, self-improvement, meaning, and money/wealth WHEN reframed as freedom, "
-    "power, or identity (never as personal-finance tips or a savings hack — 'the purpose "
-    "of money is to get free' is the validated frame; 'how to budget better' is not). "
-    "Overthinking is a SIDE TOPIC only — "
-    "never the primary theme. A clip that only diagnoses a problem without offering a "
-    "new lens, self-awareness, or implied agency FAILS the brand mission and must be "
-    "skipped. The viewer must leave with INSIGHT + HOPE, not just awareness of a trap.\n\n"
-    "CLIP SELECTION RULES:\n"
-    "1. Pick a clip containing a UNIVERSAL INSIGHT or PRINCIPLE — "
-    "something true for any listener regardless of who is speaking.\n"
-    "2. REJECT clips that are primarily: personal career stories, "
-    "event-specific narratives (sold out a venue, got signed, met "
-    "someone), name-dropping, entertainment anecdotes, or banter/trivia "
-    "with no transferable insight.\n"
-    "3. BRAND CHECK: the clip MUST (a) relate to at least one of: "
-    "human behavior, neurology, focus, motivation, identity, resilience, "
-    "self-awareness, self-knowledge, perspective on life, meaning, "
-    "emotional regulation, habit formation, stoicism, self-belief, or "
-    "money/wealth reframed as freedom or identity (never personal-finance tips) "
-    "as a universal principle; AND (b) serve at least one of the four "
-    "BRAND MISSION outcomes above (self-awareness, new perspective, "
-    "hope/agency, or self-knowledge). If the best clip fails either "
-    "check, pick the next best clip that passes both.\n"
-    "4. TOPIC PRIORITY — when multiple clips pass the brand check, "
-    "rank them in this order and pick the highest-ranked:\n"
-    "   DIGESTIBILITY FIRST (overrides all tiers): Before ranking by topic, apply "
-    "this filter — a complete stranger must grasp the core idea in under 3 seconds "
-    "with ZERO prior context. The viewer's reaction must be 'yes, that's me' — not "
-    "'interesting, let me think about that'. Concepts that require intellectual "
-    "assembly, specialist vocabulary, or explanation of the speaker's framework are "
-    "ALWAYS ranked below concepts that are immediately obvious once stated. "
-    "SIMPLE ≠ SHALLOW: 'Your brain rehearses fake scenarios to feel safe' is simple "
-    "AND deep. 'Anxiety and creativity are the same neural force' is interesting but "
-    "requires assembly — deprioritize it unless nothing simpler is available. "
-    "PROVEN DIGESTIBILITY PATTERN: the best performers ('Your Brain Is Addicted to "
-    "Fake Scenarios', 'Opt Out of Modern Culture', 'Always Grab the Right Handle') "
-    "all describe something the viewer is ALREADY doing or experiencing — they just "
-    "didn't have the frame for it yet.\n"
-    "   TIER 1 (pick first): The speaker reveals a psychological, neurological, or "
-    "systemic mechanism that is acting on the viewer WITHOUT their awareness — "
-    "AND the clip includes or implies a path to self-awareness or agency. "
-    "The viewer discovers they are inside a system AND gets a new way to see it. "
-    "PROVEN TOP PERFORMERS: "
-    "'Your Brain Is Addicted to Fake Scenarios' (873 YT views day-1, 69% retention), "
-    "'Your Brain Won't Let Go Until You Face It' (68% retention), "
-    "'Opt Out of Modern Culture Before It Breaks You' (621 YT views), "
-    "'Always Grab the Right Handle' (948 YT views) — all share this mechanic "
-    "AND leave the viewer with a new way to respond. "
-    "FEAR / ANXIETY / RUMINATION MECHANISMS are the single strongest recurring "
-    "sub-topic within TIER 1 (3 of the last 6 top performers, including 'Your Fear "
-    "Is a GPS' and both 'Brain' clips above) — actively favor transcript passages "
-    "about how fear, anxiety, or rumination actually work in the body/mind whenever "
-    "present, even over other TIER 1 candidates.\n"
-    "   TIER 2: A reframe that gives the viewer a completely new lens on their own "
-    "behavior or on life — stoic two-handle choices, identity vs. action distinctions, "
-    "contrarian principles that shift perspective, individuality-vs-conformity "
-    "(the courage to want more than the crowd finds acceptable — see 'You're Killing "
-    "Your Dreams Just to Fit In' and 'You're Not Obsessed Enough', both proven "
-    "performers), or money/wealth reframed as a vehicle for freedom or identity "
-    "(see 'Purpose of Money Is to Get Free' — validated top-2 performer).\n"
-    "   TIER 3: Self-knowledge or motivational insight grounded in a universal human truth.\n"
-    "   AVOID: clips that only diagnose a trap without a path out; clips about a single "
-    "behavioral problem with no self-awareness payoff; inspirational quotes without "
-    "a reveal; motivational pep-talk; anything that could headline a self-help listicle; "
-    "clips where the insight requires knowing the speaker's theory/framework first.\n"
-    "   NEVER select a clip where the primary mechanism or core advice is substance-based "
-    "or consumption-based: caffeine, coffee, energy drinks, supplements, nootropics, "
-    "cold showers/plunges, sleep hacks, or any biohacking tactic. These produce "
-    "lifestyle-hack content, not identity transformation. If the hook would make "
-    "someone think of a coffee mug or a pill bottle, reject it.\n"
-    "   TOPIC DIVERSITY: if the transcript's central topic is one you've likely used "
-    "recently (e.g. overthinking, procrastination), search HARDER for a different "
-    "angle in the same transcript — look for clips on identity, meaning, perspective, "
-    "resilience, or self-knowledge that are buried deeper in the episode.\n"
-    "5. SINGLE SPEAKER — HARD RULE: The selected clip window MUST contain ONE person "
-    "speaking uninterrupted. It must sound like a monologue, lecture, or sustained "
-    "personal reflection — NOT a conversation. REJECT any window where:\n"
-    "   - An interviewer or second voice asks a question (even short fillers like "
-    "'right?', 'yeah', 'exactly', 'so tell me', 'what do you mean' from anyone "
-    "other than the main speaker disqualify the window).\n"
-    "   - The transcript shows back-and-forth rhythm: short sentence → short "
-    "response → short sentence → short response.\n"
-    "   - Any exchange structure is present, even partial.\n"
-    "   If the episode is an interview, scan for sections where the interviewee "
-    "speaks without interruption for 45-58 seconds straight. These exist in almost "
-    "every interview — find them. A qualifying window should feel like the person "
-    "forgot they were being interviewed and just started talking.\n\n"
-    "Return a JSON object with exactly one key:\n"
-    f'  "candidates" : array of up to {config.CANDIDATE_COUNT} objects, ranked BEST '
-    "FIRST (candidates[0] is your top pick). Surface as many DISTINCT, non-overlapping "
-    "candidates as the transcript genuinely supports, up to the limit — fewer is fine "
-    "and expected; never pad with a weak pick just to hit the count. Every candidate "
-    "must independently satisfy the BRAND MISSION, CLIP SELECTION RULES, and SINGLE "
-    "SPEAKER rule above — do not include anything you would not defend as a full pick "
-    "on its own.\n\n"
-    "Each object in \"candidates\" must have exactly these keys:\n"
-    '  "clip_start" : number — MUST be the exact start timestamp of one of the '
-    "segments in the provided list, AND must fall at the BEGINNING of a complete "
-    "thought (the start of a sentence or idea), never mid-sentence.\n"
-    '  "clip_end"   : number — MUST be the exact end timestamp of a LATER segment '
-    "in the list, AND must fall at the END of a complete thought or conclusion. The "
-    "candidate MUST contain a full, self-contained idea WITH its payoff — never a "
-    "cliffhanger. If a complete thought runs long, ANCHOR clip_end on its concluding/"
-    "payoff sentence and choose clip_start as LATE as needed to fit the length limit "
-    "below — never drop the payoff to keep an earlier opening line.\n"
-    '  "hook"       : string — a short DRAFT contrarian identity-frame teaser for this '
-    "candidate, under 15 words, so a human reviewer can judge it at a glance. This is "
-    "a working draft, not final polished copy — final hook copy is written later, "
-    "only for the candidate a human actually picks.\n"
-    '  "exposes"    : string — one sentence: the hidden behavior, pattern, or '
-    "mechanism this clip exposes about the viewer.\n"
-    '  "reframe"    : string — one sentence: the new lens or mechanism the clip hands '
-    "the viewer.\n"
-    '  "payoff"     : string — one sentence: the concrete takeaway or resolution the '
-    "viewer walks away with.\n\n"
-    "For EACH candidate:\n"
-    "Clip length: The clip window (clip_end - clip_start) MUST be at least "
-    f"{config.CLIP_WINDOW_MIN_SECONDS} seconds and MUST NOT exceed "
-    f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds — both are hard limits, not "
-    "targets. A complete short thought that runs under "
-    f"{config.CLIP_WINDOW_MIN_SECONDS} seconds is NOT acceptable — keep reading "
-    "forward through the transcript to include the actionable payoff, the "
-    "practical application, or the next concrete example until you reach the "
-    "floor. "
-    "You may run slightly longer, but (clip_end - clip_start) MUST NEVER exceed "
-    f"{config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds under ANY circumstances. "
-    "Within that hard limit, COMPLETENESS BEATS EXACT LENGTH: prefer a contiguous "
-    "run of segments that forms a complete mini-story or a complete piece of "
-    "advice (setup AND payoff) over hitting a precise duration. If a complete "
-    f"thought will not fit within {config.CLIP_WINDOW_MAX_HARD_SECONDS} seconds, "
-    "pick a SHORTER self-contained thought that does fit — do NOT exceed the "
-    "limit to capture a longer passage. When trimming to fit, trim from the "
-    "FRONT (start later) so the clip still ENDS on the payoff; never drop the "
-    "concluding sentence.\n\n"
-    "The transcript is given as timestamped segments, one per line, formatted "
-    "[start-end] text. For each candidate, choose a contiguous run of segments "
-    "that forms a self-contained, compelling moment, and set clip_start to that "
-    "run's first segment start and clip_end to its last segment end. Do NOT "
-    "invent timestamps — only use values that appear in the list."
+    "You are given the transcript excerpt for the already-chosen clip window "
+    "below, plus a short note on why this segment was chosen (what it exposes, "
+    "its reframe, and its payoff) for context only — you do not choose or adjust "
+    "the window. Base every element of your copy on the actual words spoken in "
+    "the excerpt; do not invent claims the speaker didn't make."
 )
 
 
@@ -1371,25 +1241,61 @@ def filter_candidates(candidates: list[dict], transcript: dict) -> list[dict]:
     return survivors
 
 
-def extract_highlights(transcript: dict) -> dict:
-    """Extract a structured clip plan from a ``transcript`` dict.
+_RETRY_SLEEP_S = 65  # sleep between attempts to clear the 1-min rate-limit window
 
-    Uses ``transcript['segments']`` (with real start/end times) so the model
-    grounds clip_start/clip_end in actual timestamps. Falls back to plain
-    ``transcript['text']`` only if no segments are present.
 
-    Returns the validated JSON object as a dict.
+def _format_window_segments(segments: list, clip_start: float, clip_end: float) -> str:
+    """Render only the segments overlapping [clip_start, clip_end] (with a small
+    0.5s padding on each side) as grounded, timestamped lines, for the Stage 2
+    copywriting prompt."""
+    windowed = [
+        s for s in segments
+        if s.get("start") is not None and s.get("end") is not None
+        and s["end"] >= clip_start - 0.5 and s["start"] <= clip_end + 0.5
+    ]
+    return _format_segments(windowed)
+
+
+def extract_copy_for_window(
+    transcript: dict, clip_start: float, clip_end: float, seed: dict
+) -> dict:
+    """Stage 2: write the full copy/art-direction package for an ALREADY-CHOSEN
+    clip window.
+
+    ``clip_start``/``clip_end`` are FIXED inputs, not chosen here. ``seed`` is
+    the approved candidate dict (``hook``/``exposes``/``reframe``/``payoff``),
+    passed as context so the copy stays anchored to what was approved. Returns
+    the same schema ``extract_highlights`` used to (``hook``, ``insights``,
+    ``best_quote``, ``title``, ``clip_start``, ``clip_end``, ``hashtags``,
+    ``image_prompts``, ``search_queries``, ``video_queries``).
+
+    Runs ``_validate`` (schema/count checks — the window itself was already
+    vetted by ``filter_candidates``, so its bounds check always passes here;
+    ``_validate`` also calls ``_scene_safety_gate`` internally), then
+    ``_brand_gate``, then ``_content_gate``.
     """
     segments = transcript.get("segments") if isinstance(transcript, dict) else None
     if segments:
-        body = "Here is the episode transcript as timestamped segments:\n\n" + _format_segments(segments)
+        excerpt = _format_window_segments(segments, clip_start, clip_end)
     else:
-        text = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
-        if not text.strip():
-            raise ValueError("Transcript has no segments or text to analyze")
-        body = f"Here is the episode transcript:\n\n{text}"
+        excerpt = transcript.get("text", "") if isinstance(transcript, dict) else str(transcript)
 
-    logger.info("Extracting highlights via %s (%d segments)", config.EXTRACT_MODEL, len(segments or []))
+    if not excerpt.strip():
+        raise ValueError("No transcript excerpt found for the given clip window")
+
+    context = (
+        f"Hook (draft): {seed.get('hook', '')}\n"
+        f"Exposes: {seed.get('exposes', '')}\n"
+        f"Reframe: {seed.get('reframe', '')}\n"
+        f"Payoff: {seed.get('payoff', '')}"
+    )
+    body = (
+        f"Clip window: {clip_start:.2f}s - {clip_end:.2f}s\n\n"
+        f"Why this candidate was chosen:\n{context}\n\n"
+        f"Transcript excerpt for this window:\n\n{excerpt}"
+    )
+
+    logger.info("Extracting copy via %s for window %.2f-%.2fs", config.EXTRACT_MODEL, clip_start, clip_end)
     client = _client()
 
     response = client.messages.create(
@@ -1398,7 +1304,7 @@ def extract_highlights(transcript: dict) -> dict:
         system=[
             {
                 "type": "text",
-                "text": SYSTEM_PROMPT,
+                "text": COPY_SYSTEM_PROMPT,
                 "cache_control": {"type": "ephemeral"},
             }
         ],
@@ -1408,72 +1314,46 @@ def extract_highlights(transcript: dict) -> dict:
     raw = next((b.text for b in response.content if b.type == "text"), "")
     parsed = json.loads(_strip_to_json(raw))
 
-    # Rescue an out-of-band pick at sentence boundaries BEFORE validation, so a
-    # deterministic too-short / too-long thought is adjusted rather than rejected
-    # (re-asking returns the same pick). Order matters: extend a too-short clip up
-    # to the floor first, THEN cap a too-long one back under the ceiling (extending
-    # can itself create an over-length window).
-    words = transcript.get("words") if isinstance(transcript, dict) else None
-    if words:
-        _extend_to_floor(parsed, words, segments or [])
-        _trim_to_cap(parsed, words)
+    # clip_start/clip_end are FIXED inputs, not chosen by this call — inject
+    # them so _validate's schema/window checks (unchanged, reused as-is) still
+    # apply; the window itself was already vetted by filter_candidates.
+    parsed["clip_start"] = clip_start
+    parsed["clip_end"] = clip_end
+
     _validate(parsed)
     _brand_gate(parsed)
-
-    # Snap onto real sentence boundaries so the clip never cuts a word in half
-    # and never opens/ends mid-thought, then re-extend/re-cap: snapping clip_start
-    # later can drop the window back under the floor, and snapping it earlier can
-    # nudge it back over the ceiling. This MUST happen before _content_gate: the
-    # gate reads the actual clip words and judges whether the segment "lands its
-    # payoff" — judging the pre-snap window means it's reading text that may end
-    # mid-sentence/mid-word (Whisper segment boundaries don't align to sentences),
-    # which reads as an unlanded payoff even when snapping would have fixed it two
-    # steps later. The gate must see the SAME text the render will actually use.
-    if words:
-        _snap_to_sentences(parsed, words)
-        _extend_to_floor(parsed, words, segments or [])
-        _trim_to_cap(parsed, words)
-        window = parsed["clip_end"] - parsed["clip_start"]
-        if window > config.CLIP_WINDOW_MAX_HARD_SECONDS:
-            logger.warning(
-                "Snapped clip window %.1fs exceeds hard max %ds",
-                window, config.CLIP_WINDOW_MAX_HARD_SECONDS,
-            )
-
     _content_gate(parsed, transcript)
 
-    logger.info("Extracted clip: %.1f-%.1fs | title=%r", parsed["clip_start"], parsed["clip_end"], parsed["title"])
+    logger.info("Extracted copy for window %.1f-%.1fs | title=%r", clip_start, clip_end, parsed.get("title"))
     return parsed
 
 
-_RETRY_SLEEP_S = 65  # sleep between attempts to clear the 1-min rate-limit window
+def extract_copy_with_retry(
+    transcript: dict, clip_start: float, clip_end: float, seed: dict, attempts: int = 3
+) -> dict:
+    """Call :func:`extract_copy_for_window` up to ``attempts`` times, tolerating
+    the model's non-deterministic output.
 
-
-def extract_highlights_with_retry(transcript: dict, attempts: int = 3) -> dict:
-    """Call :func:`extract_highlights` up to ``attempts`` times, tolerating the
-    model's non-deterministic output.
-
-    Extraction is NOT deterministic: the same transcript can yield an off-by-one
-    count (e.g. 5 ``image_prompts`` instead of 4) or stray trailing data that trips
-    ``_validate``/``json.loads`` (both raise ``ValueError``). Rather than die on the
-    first throw, retry a few times — a later attempt almost always passes. Only
-    ``ValueError`` and ``RateLimitError`` are caught; other transport/API errors
-    propagate immediately. Re-raises the last error after the final attempt fails.
+    Unlike the old blind retry, this regenerates copy for the SAME fixed
+    window each attempt — it cannot drift to a different segment. Only
+    ``ValueError`` and ``anthropic.RateLimitError`` are caught; other
+    transport/API errors propagate immediately. Re-raises the last error after
+    the final attempt fails.
     """
     last_exc: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            return extract_highlights(transcript)
+            return extract_copy_for_window(transcript, clip_start, clip_end, seed)
         except ValueError as exc:
             last_exc = exc
             logger.warning(
-                "extract_highlights attempt %d/%d failed (non-deterministic): %s",
+                "extract_copy_for_window attempt %d/%d failed (non-deterministic): %s",
                 attempt, attempts, exc,
             )
         except anthropic.RateLimitError as exc:
             last_exc = exc
             logger.warning(
-                "extract_highlights attempt %d/%d hit rate limit: %s",
+                "extract_copy_for_window attempt %d/%d hit rate limit: %s",
                 attempt, attempts, exc,
             )
         if attempt < attempts:
@@ -1504,8 +1384,22 @@ if __name__ == "__main__":
     print(f"Transcribing: {os.path.basename(mp3s[0])}")
     transcript = transcribe.transcribe(mp3s[0])
 
-    result = extract_highlights(transcript)
+    candidates = find_candidates(transcript)
+    print(f"\n=== {len(candidates)} raw candidate(s) ===")
+    for i, c in enumerate(candidates, 1):
+        print(f"{i}. [{c['clip_start']:.1f}-{c['clip_end']:.1f}s] {c['hook']!r}")
 
-    print("\n=== Extracted clip plan ===")
+    survivors = filter_candidates(candidates, transcript)
+    print(f"\n=== {len(survivors)} survivor(s) after filtering ===")
+    for i, c in enumerate(survivors, 1):
+        print(f"{i}. [{c['clip_start']:.1f}-{c['clip_end']:.1f}s] {c['hook']!r}")
+
+    if not survivors:
+        raise SystemExit("No candidates survived filtering.")
+
+    top = survivors[0]
+    result = extract_copy_for_window(transcript, top["clip_start"], top["clip_end"], top)
+
+    print("\n=== Extracted copy for top survivor ===")
     print(json.dumps(result, indent=2, ensure_ascii=False).encode("ascii", "replace").decode("ascii"))
     print(f"\nClip window: {result['clip_end'] - result['clip_start']:.1f}s (valid)")
