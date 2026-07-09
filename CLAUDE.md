@@ -58,7 +58,17 @@ there, not in module bodies.
 
 The `main.py` flow:
 1. `rss_ingest.pick_random_entry(feed_url, exclude_guids)` — parse feed, filter already-used GUIDs, pick a random unused episode; `download_latest` fetches its audio. (Manual runs use `fetch_latest` instead.)
-2-3. `_load_or_build_plan(audio_path)` — transcribe + extract, cached together as `tmp/<basename>.plan.json`. Immediately after this step, `posted_history.mark_used()` retires the episode so it can never be re-selected, even if the YouTube upload later fails.
+2-3. Two-stage extraction, orchestrated by `main.py`'s `_pick_episode_and_candidate`
+/ `_find_and_pick_candidate`: transcribe (cached separately as
+`tmp/<basename>.transcript.json`) → `ai_extract.find_candidates` surfaces up to
+`config.CANDIDATE_COUNT` (5) ranked clip candidates → `ai_extract.filter_candidates`
+snaps each to sentence boundaries and drops content-gate failures → a human
+picks one (or rejects all, looping to the next episode) → `ai_extract.extract_copy_with_retry`
+writes the full copy/art-direction package for the approved window only, cached
+as `tmp/<basename>.plan.json`. `posted_history.mark_used()` retires the episode
+once a candidate is approved and Stage 2 succeeds (or immediately, for a
+rejected/empty-shortlist episode), so it can never be re-selected, even if the
+YouTube upload later fails.
 4. `background.select_backgrounds(highlights)` — Pexels video → Gemini → gradient.
 5. `video_gen.build_video(...)` — the karaoke MP4.
 6. `slide_gen.build_slides(highlights)` — the 6-PNG carousel.
@@ -68,7 +78,14 @@ Publish is then best-effort (R2 + YouTube); failures are logged but never fatal.
 
 - `rss_ingest.pick_random_entry(feed_url, exclude_guids, host_name=None)` → `(feed, entry, metadata)` — random unused episode from the RSS window (used by `--auto`). `rss_ingest.fetch_latest(feed_url)` → `{"title", "audio_path", "description", "link"}` — always-latest, used by manual runs only. `host_name` (looked up from `config.PODCAST_HOSTS` by every call site) is threaded into the prescreen so a guest/interview episode — where the named host isn't even the one speaking — is rejected at the RSS stage, before any download/transcription. **Hard rule: if the named host isn't speaking, don't take the episode.** There's no speaker diarization, so this is enforced at the episode level (title + description via a cheap Haiku call), not by trying to detect host-vs-guest within a transcript.
 - `transcribe.transcribe(audio_path)` → `{"text", "segments":[{start,end,text}], "words":[{word,start,end}]}` (Groq `whisper-large-v3`, word + segment granularity).
-- `ai_extract.extract_highlights(transcript)` → validated JSON dict with exactly these keys:
+- `ai_extract` now runs a two-stage extraction. Stage 1 — `find_candidates(transcript)`
+  → up to `config.CANDIDATE_COUNT` (5) ranked `{clip_start, clip_end, hook, exposes,
+  reframe, payoff}` dicts (no copywriting yet); `filter_candidates(candidates, transcript)`
+  → survivors only, snapped to sentence boundaries and content-gated. Stage 2 —
+  `extract_copy_for_window(transcript, clip_start, clip_end, seed)` (wrapped by
+  `extract_copy_with_retry`, same 3-attempt/65s-sleep retry shape) writes the full
+  copy for an ALREADY-FIXED window and returns the same schema the old single-pass
+  `extract_highlights` used to (now removed) — exactly these keys:
   `hook, insights[3], best_quote, title, clip_start, clip_end, hashtags[3-8], image_prompts[4], search_queries[5], video_queries[5]`.
   - `video_queries` is a list of **5 objects** `{"keyword": <one concept word>, "query": <2-4 word portrait video search>}`, not bare strings: **4 primary beats + 1 spare backup** (`config.VIDEO_QUERY_EXTRACT_COUNT` = `VIDEO_QUERY_COUNT` + `VIDEO_QUERY_SPARE`). `pexels_bg` fills `VIDEO_QUERY_COUNT` (4) slots and dips into the spare when a primary query yields a duplicate/empty result.
   - `_validate()` enforces types/counts. `clip_start`/`clip_end` must be real segment timestamps and the window must fall within `CLIP_WINDOW_MIN_SECONDS` (45) .. `CLIP_WINDOW_MAX_HARD_SECONDS` (58 — capped so the finished Short stays under 60s, where YouTube blocks the Pixabay music bed).
@@ -217,10 +234,35 @@ Model IDs: Claude `claude-sonnet-4-6` (`config.EXTRACT_MODEL`), Groq `whisper-la
 - **Background music is mixed at −18 dB** (`MUSIC_GAIN_DB`) under the full-volume voice, with 1.0s/1.5s fades. The single track lives at `assets/music/background.mp3`; if it's missing the render silently goes voice-only.
 - **Clip selection is completeness-first, but length-capped.** The extraction prompt forces a self-contained thought *with its payoff* (never a cliffhanger), within a 45-58s target and a hard 58s ceiling; the clip is snapped to real sentence boundaries via word timestamps. The 58s cap keeps the finished Short **under 60s** — at/above 60s YouTube blocks the Pixabay music bed on copyright grounds. If the model's best thought runs over, `_trim_to_cap` shortens it to a sentence boundary under the cap (it does not get rejected).
 - **Two query lists, two consumers** (see Architecture): `search_queries` (5, photos) feeds the slides; `video_queries` (5 = 4 primary + 1 spare, motion) feeds the video (4 slots, spare as fallback). Don't cross them.
-- **Stale plan caches:** `main.py`'s `_load_or_build_plan` only auto-regenerates extraction when `search_queries` is missing — it does **not** check for `video_queries`. A cache written before `video_queries` existed will keep an older highlights dict; `background.py` handles this by falling back to `search_queries` for the video search. (The `video_gen` harness *does* regenerate on a missing `video_queries`.) Delete the `*.plan.json` to force a clean re-extract.
+- **Stale plan caches:** `main.py`'s `run()` treats a `*.plan.json` hit as final —
+it does **not** check the cached highlights for missing/stale fields (that
+migration path only exists in the `video_gen` harness, which regenerates Stage 2
+copy for the cached window when `search_queries` is missing or `video_queries`
+is in the old plain-string form). `background.py` separately falls back to
+`search_queries` for the video search on old cached plans that predate
+`video_queries` entirely. Delete the `*.plan.json` (and, if you want a fresh
+Stage 1 candidate scan too, the matching `*.transcript.json`) to force a clean
+re-extract.
 - **Windows-specific fonts:** captions/watermark load from `C:\Windows\Fonts`; slides prefer bundled DejaVu in `assets/fonts/`.
 - **Dead config constants:** `HOOK_*` (the old top-of-frame hook banner was removed from the video), and `CLIP_MIN_SECONDS`/`CLIP_MAX_SECONDS`/`MAX_CLIPS_PER_EPISODE` are no longer referenced anywhere. The live clip-length knobs are the `CLIP_WINDOW_*` constants.
-- **Extraction is non-deterministic — re-extracts go through a 3-attempt retry helper.** Identical transcript inputs yield varying output: occasional trailing data after the JSON (the model appends a note/second object), or off-by-one counts (e.g. 5 `image_prompts` instead of 4) that trip `_validate`. `_strip_to_json` isolates the **first complete JSON object** via `json.JSONDecoder().raw_decode` (tolerates trailing data), but the count/validation variance raises `ValueError`. `ai_extract.extract_highlights_with_retry(transcript, attempts=3)` wraps `extract_highlights`, catching only `ValueError` (schema/parse — transport/API errors propagate), logging each failed attempt, and re-raising the last error after the 3rd. **All re-extract sites call the retry helper**, not the bare function: `main.py._load_or_build_plan` (both the cache-miss path and the missing-`search_queries` regeneration path) and `video_gen.__main__` (both the cache-miss and stale-cache regeneration paths). Don't call `extract_highlights` directly from a pipeline path — it dies on the first throw.
+- **Extraction is non-deterministic — both stages go through retry helpers.** Identical
+transcript inputs yield varying output: occasional trailing data after the JSON (the
+model appends a note/second object), or off-by-one counts (e.g. 5 `image_prompts`
+instead of 4) that trip `_validate`. `_strip_to_json` isolates the **first complete
+JSON object** via `json.JSONDecoder().raw_decode` (tolerates trailing data), but the
+count/validation variance raises `ValueError`. `ai_extract.extract_copy_with_retry(transcript,
+clip_start, clip_end, seed, attempts=3)` wraps `extract_copy_for_window`, catching
+only `ValueError` (schema/parse — transport/API errors propagate) and `anthropic.RateLimitError`,
+logging each failed attempt, and re-raising the last error after the 3rd — critically,
+every retry regenerates copy for the SAME fixed window, so it can never drift to a
+different segment. Stage 1's `find_candidates` has no retry wrapper (a weak batch
+just yields fewer/zero survivors after filtering, which the episode loop already
+handles by moving to the next episode). `main.py`'s `run()` calls `extract_copy_with_retry`
+for every approved candidate; if it exhausts all 3 attempts, `run()` retires the
+episode and re-invokes the picker for a fresh candidate/episode rather than crashing.
+The `video_gen` harness's stale-cache regeneration path also calls `extract_copy_with_retry`
+(reusing the cached `clip_start`/`clip_end`, with an empty `seed`). Don't call
+`extract_copy_for_window` directly from a pipeline path — it dies on the first throw.
 - **Background pillarboxing (FIXED — was NOT final-slot-only).** The earlier claim that black side bars only affected the final slot (hidden elsewhere by crossfades) was **empirically false**: a bare edge appeared mid-slot (verified at ~22s, a ~20–49px right bar) on any slot that ran the **Ken Burns** path, with no successor crossfade needed. Root cause: `_ken_burns_motion` used a **time-varying `.resized()` AND time-varying `.with_position()` together**, and MoviePy v2 does **not** composite that combination the way the centering math predicts — the geometry said it over-covered by 60px while pixels showed a 20px bar. Fix: `_ken_burns_motion` now resizes ONCE by a **constant** over-scale `s = max(z0, z1, 1 + 2·max(|pan|)/min(w,h) + 0.06)` (a fixed, known oversized frame → predictable blit) and pans only via a **clamped** `with_position` (`x ∈ [w−fw, 0]`). The zoom *ramp* is dropped in favour of the fixed over-scale + drift — bar-proof at the cost of the slow zoom-in. `_video_background_layers` also re-crops each slot to **exactly** 1080×1920 before Ken Burns (resize round-off could leave a 1px-under frame that the KB position math then under-covered) and logs `BG slot N cover-crop dims:` to prove it. **Verify every render with the edge-brightness scan**, not just a visual tail grab: sample one frame every ~2s across the WHOLE video, measure mean brightness of the leftmost/rightmost 15px strips over the middle 60% of height, and FAIL if any frame has one edge < 8 while the opposite is > 15. Beware false positives where the footage itself is genuinely dark on one side — confirm a suspected bar by checking for a *contiguous near-zero column run with a sharp cliff* (a real added bar) vs. a soft gradient (real content), and by probing the raw source clip's edges.
 - **Re-rendering an *approved* episode pulls DIFFERENT footage unless you intervene** (the render-time-ledger gotcha, made concrete): a standalone `python -m modules.pexels_bg` run commits its ids to `footage_history.json` immediately, so a follow-up `video_gen` run rejects those now-in-history cached clips and fetches fresh. To re-render with the exact approved clips, **remove just those ids from `tmp/footage_history.json` first** (the render re-adds them on completion). `ffmpeg`/`ffprobe` are on PATH (winget Gyan.FFmpeg) for these manual dimension/frame checks — separate from the `imageio_ffmpeg` binary MoviePy uses.
 
