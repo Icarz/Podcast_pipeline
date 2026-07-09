@@ -84,8 +84,18 @@ def _display_name(feed_arg: str) -> str:
 
 
 def _plan_cache_path(audio_path: str) -> str:
-    """The plan cache path video_gen uses: tmp/<basename>.plan.json."""
+    """The final combined plan cache: tmp/<basename>.plan.json (video_gen reads
+    this too). Written only once, after Stage 2 succeeds for an approved
+    candidate."""
     return os.path.splitext(audio_path)[0] + ".plan.json"
+
+
+def _transcript_cache_path(audio_path: str) -> str:
+    """Transcribe-only cache: tmp/<basename>.transcript.json. Separate from the
+    plan cache so re-running Stage 1 (e.g. across a reject-all candidate loop,
+    or a second manual run before the episode is approved) never re-hits Groq,
+    even though nothing has been approved yet."""
+    return os.path.splitext(audio_path)[0] + ".transcript.json"
 
 
 def _write_plan(cache_path: str, transcript: dict, highlights: dict) -> None:
@@ -93,34 +103,103 @@ def _write_plan(cache_path: str, transcript: dict, highlights: dict) -> None:
         json.dump({"transcript": transcript, "highlights": highlights}, f)
 
 
-def _load_or_build_plan(audio_path: str) -> tuple[dict, dict]:
-    """Return (transcript, highlights), reusing the cache when present.
+def _load_or_build_transcript(audio_path: str) -> dict:
+    """Return the transcript dict, reusing a cache when present.
 
-    Only transcribes (Groq) + extracts (Claude) on a cache miss, so repeat
-    runs of the same episode never burn API credits.
+    Transcribe-only (Groq). The candidate/copy extraction (Claude) happens
+    later, after a human picks a candidate, and must not force a
+    re-transcription just because the pick changes or is rejected.
     """
-    cache_path = _plan_cache_path(audio_path)
-
+    cache_path = _transcript_cache_path(audio_path)
     if os.path.exists(cache_path):
-        logger.info("[2-3/6] Plan cache HIT: %s (skipping Groq + Claude)", os.path.basename(cache_path))
+        logger.info("Transcript cache HIT: %s (skipping Groq)", os.path.basename(cache_path))
         with open(cache_path, encoding="utf-8") as f:
-            cached = json.load(f)
-        transcript, highlights = cached["transcript"], cached["highlights"]
-        # Regenerate JUST the extraction (no Groq) if the cached plan predates a
-        # schema field we now require.
-        if "search_queries" not in highlights:
-            logger.info("Cached plan missing search_queries; re-running extraction (no Groq)")
-            highlights = ai_extract.extract_highlights_with_retry(transcript)
-            _write_plan(cache_path, transcript, highlights)
-        return transcript, highlights
+            return json.load(f)
 
     logger.info("[2/6] Transcribe (Groq Whisper): %s", os.path.basename(audio_path))
     transcript = transcribe.transcribe(audio_path)
-    logger.info("[3/6] Extract clip plan (Claude %s)", config.EXTRACT_MODEL)
-    highlights = ai_extract.extract_highlights_with_retry(transcript)
-    _write_plan(cache_path, transcript, highlights)
-    logger.info("Cached transcript + plan: %s", os.path.basename(cache_path))
-    return transcript, highlights
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump(transcript, f)
+    logger.info("Cached transcript: %s", os.path.basename(cache_path))
+    return transcript
+
+
+def _print_candidates(candidates: list[dict]) -> None:
+    print("\nCandidate clips:")
+    for i, c in enumerate(candidates, 1):
+        print(f"  {i}. [{c['clip_start']:.1f}-{c['clip_end']:.1f}s] {c['hook']!r}")
+        print(f"     exposes: {c.get('exposes', '')}")
+        print(f"     reframe: {c.get('reframe', '')}")
+        print(f"     payoff : {c.get('payoff', '')}")
+
+
+def _find_and_pick_candidate(transcript: dict, interactive: bool = True) -> dict | None:
+    """Run Stage 1 (find + filter) and return the chosen candidate, or ``None``
+    if there are no survivors or the human rejects every candidate.
+
+    ``interactive=False`` (used by ``--auto``) skips the prompt and takes the
+    top-ranked survivor automatically — no human is present for scheduled runs.
+    """
+    candidates = ai_extract.find_candidates(transcript)
+    survivors = ai_extract.filter_candidates(candidates, transcript)
+    if not survivors:
+        logger.info("No viable candidates after filtering (%d raw)", len(candidates))
+        return None
+
+    if not interactive:
+        logger.info("Auto mode: taking top candidate (%d survivor(s))", len(survivors))
+        return survivors[0]
+
+    _print_candidates(survivors)
+    choice = input("Pick a number, or 0 to reject all: ").strip()
+    if choice == "0":
+        return None
+    try:
+        idx = int(choice) - 1
+    except ValueError:
+        idx = -1
+    if 0 <= idx < len(survivors):
+        return survivors[idx]
+    print("Invalid choice; treating as reject-all.")
+    return None
+
+
+def _pick_episode_and_candidate(feed_arg: str, interactive: bool = True) -> tuple[dict, dict, dict]:
+    """Loop episodes until a candidate is approved, or the RSS window is exhausted.
+
+    Returns ``(episode, transcript, chosen_candidate)``. Raises ``RuntimeError``
+    when every episode in the RSS window has been used/rejected. A rejected
+    episode (empty shortlist, or the human rejects every candidate) is retired
+    via ``posted_history.mark_used`` — same permanent-skip treatment as a
+    published episode, per the design spec.
+    """
+    feed_url = config.PODCAST_FEEDS.get(feed_arg, feed_arg)
+    host_name = config.PODCAST_HOSTS.get(feed_arg)
+    used_guids = set(posted_history.load().keys())
+
+    while True:
+        picked = rss_ingest.pick_random_entry(feed_url, exclude_guids=used_guids, host_name=host_name)
+        if picked is None:
+            raise RuntimeError(
+                f"All episodes in the RSS window for '{feed_arg}' have already been used. "
+                "Delete tmp/posted_history.json to reset."
+            )
+        feed_obj, entry, meta = picked
+        guid = meta.get("guid", "")
+        logger.info("[1/6] Ingest: candidate episode %r (guid=%s)", meta.get("title"), guid)
+        episode = rss_ingest.download_latest(feed_obj, entry)
+        transcript = _load_or_build_transcript(episode["audio_path"])
+
+        candidate = _find_and_pick_candidate(transcript, interactive=interactive)
+        if candidate is None:
+            if guid:
+                posted_history.mark_used(guid=guid, feed=feed_arg, title=episode.get("title", ""))
+                used_guids.add(guid)
+            print(f"No candidate approved for {episode.get('title')!r} — trying next episode.")
+            continue
+
+        return episode, transcript, candidate
 
 
 def _publish_stage(
@@ -200,56 +279,104 @@ def _publish_stage(
     return result
 
 
-def run(feed_arg: str, episode: dict | None = None, privacy_status: str = "private") -> dict:
-    """Run ingest -> render -> publish for the latest episode of ``feed_arg``.
+def run(
+    feed_arg: str,
+    episode: dict | None = None,
+    privacy_status: str = "private",
+    render_slides: bool = True,
+    interactive: bool = True,
+) -> dict:
+    """Run ingest -> render -> publish for an episode of ``feed_arg``.
 
     ``feed_arg`` is a key in ``config.PODCAST_FEEDS`` or a raw RSS URL.
-    ``episode`` may be a pre-ingested episode dict (with ``audio_path``) — passed
-    by :func:`run_auto` so the feed it already parsed for the GUID pre-check is
-    NOT parsed/downloaded a second time. When ``None`` (manual runs) the feed is
-    parsed + downloaded here. ``privacy_status`` is forwarded to YouTube
-    (default ``"private"``). Returns a summary dict.
-    """
-    feed_url = config.PODCAST_FEEDS.get(feed_arg, feed_arg)
-    podcast_name = _display_name(feed_arg)
-    logger.info("Starting pipeline | feed=%s -> %s", feed_arg, feed_url)
 
-    # 1) Ingest: pick a random unused episode from the feed (or use the
-    #    pre-fetched episode handed in by run_auto so the feed is parsed once).
-    if episode is None:
-        used_guids = set(posted_history.load().keys())
-        picked = rss_ingest.pick_random_entry(
-            feed_url, exclude_guids=used_guids, host_name=config.PODCAST_HOSTS.get(feed_arg),
-        )
-        if picked is None:
-            raise RuntimeError(
-                f"All episodes in the RSS window for '{feed_arg}' have already been used. "
-                "Delete tmp/posted_history.json to reset."
+    When ``episode`` is ``None`` (RSS mode — feed runs and ``--auto``), episode
+    AND candidate-clip selection are both handled internally by
+    :func:`_pick_episode_and_candidate`, looping to another episode whenever a
+    candidate shortlist comes up empty or (interactively) every candidate is
+    rejected. If Stage 2 copywriting (:func:`ai_extract.extract_copy_with_retry`)
+    exhausts its retries for the chosen candidate, the episode is retired and
+    the picker runs again for a fresh candidate/episode.
+
+    When ``episode`` is given (``--url`` direct-audio mode: there is only one
+    episode, nothing to fall back to), a plan-cache hit short-circuits both
+    stages entirely (e.g. a second run of the same URL); on a cache miss, a
+    single Stage-1 pick and Stage-2 copy pass are attempted and any failure
+    (reject-all, or Stage 2 exhaustion) raises immediately rather than looping.
+
+    ``interactive=False`` (used by ``run_auto``) disables the human prompt and
+    auto-picks the top-ranked surviving candidate at each Stage 1 pass.
+    ``privacy_status`` is forwarded to YouTube (default ``"private"``).
+    ``render_slides=False`` skips the carousel deck entirely (video-only run) —
+    ``_publish_stage`` and the summary printer already treat an empty
+    ``slides`` list as a no-op. Returns a summary dict.
+    """
+    podcast_name = _display_name(feed_arg)
+    logger.info("Starting pipeline | feed=%s", feed_arg)
+
+    if episode is not None:
+        # --url direct-audio mode: exactly one episode, no RSS loop.
+        audio_path = episode["audio_path"]
+        cache_path = _plan_cache_path(audio_path)
+        if os.path.exists(cache_path):
+            logger.info("[2-6/6] Plan cache HIT: %s (skipping Groq + Claude)", os.path.basename(cache_path))
+            with open(cache_path, encoding="utf-8") as f:
+                cached = json.load(f)
+            transcript, highlights = cached["transcript"], cached["highlights"]
+        else:
+            transcript = _load_or_build_transcript(audio_path)
+            logger.info("[3/6] Find + filter clip candidates (Claude %s)", config.EXTRACT_MODEL)
+            candidate = _find_and_pick_candidate(transcript, interactive=interactive)
+            if candidate is None:
+                raise RuntimeError(
+                    f"No candidate approved for {episode.get('title')!r}; "
+                    "nothing to fall back to in --url mode."
+                )
+            logger.info("Extracting copy (Claude %s) for approved candidate", config.EXTRACT_MODEL)
+            highlights = ai_extract.extract_copy_with_retry(
+                transcript, candidate["clip_start"], candidate["clip_end"], candidate,
             )
-        feed_obj, entry, _ = picked
-        logger.info("[1/6] Ingest: random episode selected, downloading")
-        episode = rss_ingest.download_latest(feed_obj, entry)
+            _write_plan(cache_path, transcript, highlights)
+            logger.info("Cached transcript + plan: %s", os.path.basename(cache_path))
     else:
-        logger.info("[1/6] Ingest: using pre-fetched episode (feed parsed once)")
-    audio_path = episode["audio_path"]
+        # RSS mode (feed runs and --auto): pick episode + candidate, looping on
+        # empty shortlists, reject-all, or Stage 2 retry exhaustion.
+        while True:
+            episode, transcript, candidate = _pick_episode_and_candidate(feed_arg, interactive=interactive)
+            audio_path = episode["audio_path"]
+            cache_path = _plan_cache_path(audio_path)
+            try:
+                logger.info("Extracting copy (Claude %s) for approved candidate", config.EXTRACT_MODEL)
+                highlights = ai_extract.extract_copy_with_retry(
+                    transcript, candidate["clip_start"], candidate["clip_end"], candidate,
+                )
+            except Exception as exc:  # noqa: BLE001 - Stage 2 exhaustion must fall back, not crash the run
+                logger.warning(
+                    "Stage 2 copy extraction failed for %r (%s); retiring episode "
+                    "and trying another candidate/episode", episode.get("title"), exc,
+                )
+                guid = episode.get("guid")
+                if guid:
+                    posted_history.mark_used(guid=guid, feed=feed_arg, title=episode.get("title", ""))
+                continue
+            _write_plan(cache_path, transcript, highlights)
+            logger.info("Cached transcript + plan: %s", os.path.basename(cache_path))
+            break
+
     logger.info("Episode: %s", episode.get("title"))
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"Downloaded audio missing: {audio_path}")
 
-    # 2-3) Transcribe + extract clip plan (cached together as one plan.json).
-    transcript, highlights = _load_or_build_plan(audio_path)
     cs, ce = float(highlights["clip_start"]), float(highlights["clip_end"])
     logger.info("Clip window: %.2f-%.2fs (%.1fs)", cs, ce, ce - cs)
 
-    # Retire the episode immediately after the plan is built so a YouTube
-    # failure later doesn't leave it available for re-selection next run.
+    # Retire the episode immediately after the plan is built (RSS mode only —
+    # 'manual' --url episodes are never excluded from re-selection since
+    # there's no RSS pool to exclude them from) so a YouTube failure later
+    # doesn't leave it available for re-selection next run.
     guid = episode.get("guid")
     if guid and feed_arg != "manual":
-        posted_history.mark_used(
-            guid=guid,
-            feed=feed_arg,
-            title=episode.get("title", ""),
-        )
+        posted_history.mark_used(guid=guid, feed=feed_arg, title=episode.get("title", ""))
 
     # 4) Background selection: Pexels video -> Gemini image -> gradient chain.
     logger.info("[4/6] Backgrounds: select (Pexels -> Gemini -> gradient)")
@@ -268,8 +395,12 @@ def run(feed_arg: str, episode: dict | None = None, privacy_status: str = "priva
     )
 
     # 6) Render the static slide deck (hook + 3 insights + quote = 5 PNGs).
-    logger.info("[6/6] Slides: render deck")
-    slides = slide_gen.build_slides(highlights)
+    if render_slides:
+        logger.info("[6/6] Slides: render deck")
+        slides = slide_gen.build_slides(highlights)
+    else:
+        logger.info("[6/6] Slides: skipped (render_slides=False)")
+        slides = []
 
     # 7) Publish: R2 -> YouTube -> manual reminders (best-effort, never fatal).
     logger.info("[7/7] Publish: R2 + YouTube + manual reminders")
@@ -300,25 +431,24 @@ def run(feed_arg: str, episode: dict | None = None, privacy_status: str = "priva
     }
 
 
-_AUTO_MAX_EPISODE_ATTEMPTS = 5
-
-
 def run_auto(privacy_status: str = "private") -> dict | None:
     """Rotation entry point: pick today's feed and process a random unused episode.
 
     Resolves today's weekday against ``config.ROTATION`` and:
-      * not a posting day           -> log and return None,
-      * feed unreachable            -> log and return None,
+      * not a posting day            -> log and return None,
+      * feed unreachable             -> log and return None,
       * all RSS entries already used -> log and return None,
-      * otherwise                   -> pick a random unused episode and run the
-                                       full pipeline via :func:`run`.
+      * otherwise                    -> run the full pipeline via :func:`run`
+                                        with ``interactive=False`` (no human is
+                                        present for scheduled runs; the top
+                                        surviving candidate is taken
+                                        automatically at each Stage 1 pass).
 
-    If the content gate rejects every extraction attempt for an episode (all 3
-    retries fail), the episode is skipped and another is tried — up to
-    ``_AUTO_MAX_EPISODE_ATTEMPTS`` episodes before giving up.
-
-    Episodes are retired at render time (not post time), so a YouTube failure
-    never leaves an episode re-eligible for selection next run.
+    Episode/candidate selection, filtering, and Stage 2 retry-exhaustion
+    fallback are all handled inside :func:`run` (via
+    :func:`_pick_episode_and_candidate`) — this function only resolves which
+    feed to use today and translates a fully-exhausted RSS window or a feed
+    error into a clean ``None`` return instead of a crash.
     """
     weekday = date.today().weekday()
     feed_key = config.ROTATION.get(weekday)
@@ -326,59 +456,16 @@ def run_auto(privacy_status: str = "private") -> dict | None:
         logger.info("Auto mode: no posting day today (%s); nothing to do", _WEEKDAY_NAMES[weekday])
         return None
 
-    feed_url = config.PODCAST_FEEDS[feed_key]
     logger.info("Auto mode: %s -> feed '%s' (random episode)", _WEEKDAY_NAMES[weekday], feed_key)
 
-    used_guids = set(posted_history.load().keys())
-    skipped_guids: set[str] = set()
-
-    for ep_attempt in range(1, _AUTO_MAX_EPISODE_ATTEMPTS + 1):
-        try:
-            picked = rss_ingest.pick_random_entry(
-                feed_url, exclude_guids=used_guids | skipped_guids,
-                host_name=config.PODCAST_HOSTS.get(feed_key),
-            )
-        except Exception as exc:  # noqa: BLE001 - feed problems must not break scheduling
-            logger.warning("Auto mode: feed '%s' unavailable (%s); exiting cleanly", feed_key, exc)
-            return None
-
-        if picked is None:
-            logger.info(
-                "Auto mode: all episodes in '%s' RSS window already used; nothing to do",
-                feed_key,
-            )
-            return None
-
-        feed, entry, meta = picked
-        guid = meta.get("guid", "")
-        logger.info(
-            "Auto mode: episode attempt %d/%d: %r (guid=%s)",
-            ep_attempt, _AUTO_MAX_EPISODE_ATTEMPTS, meta.get("title"), guid,
-        )
-        episode = rss_ingest.download_latest(feed, entry)
-
-        try:
-            return run(feed_key, episode=episode, privacy_status=privacy_status)
-        except ValueError as exc:
-            if "CONTENT GATE" in str(exc) or "BRAND GATE" in str(exc):
-                logger.warning(
-                    "Auto mode: episode %r failed quality gates after all retries, "
-                    "skipping to next episode: %s", meta.get("title"), exc,
-                )
-                if guid:
-                    skipped_guids.add(guid)
-                # Clean up stale plan cache so it doesn't block future runs
-                cache_path = _plan_cache_path(episode["audio_path"])
-                if os.path.exists(cache_path):
-                    os.remove(cache_path)
-                continue
-            raise
-
-    logger.warning(
-        "Auto mode: exhausted %d episode attempts for '%s'; no episode passed quality gates",
-        _AUTO_MAX_EPISODE_ATTEMPTS, feed_key,
-    )
-    return None
+    try:
+        return run(feed_key, privacy_status=privacy_status, interactive=False)
+    except RuntimeError as exc:
+        logger.info("Auto mode: %s; nothing to do", exc)
+        return None
+    except Exception as exc:  # noqa: BLE001 - feed/network problems must not break scheduling
+        logger.warning("Auto mode: feed '%s' unavailable (%s); exiting cleanly", feed_key, exc)
+        return None
 
 
 def _print_summary(result: dict) -> None:
@@ -473,7 +560,16 @@ if __name__ == "__main__":
         default="private",
         help="YouTube visibility for the uploaded Short (default: private)",
     )
+    parser.add_argument(
+        "--no-slides",
+        action="store_true",
+        help="Skip the slide-carousel render; produce the karaoke video only. "
+        "Not supported with --auto.",
+    )
     args = parser.parse_args()
+
+    if args.no_slides and args.auto:
+        parser.error("--no-slides cannot be combined with --auto")
 
     if args.url and args.auto:
         parser.error("--url cannot be combined with --auto")
@@ -491,50 +587,15 @@ if __name__ == "__main__":
             # normal pipeline from transcribe onward as the "manual" feed.
             logger.info("Direct URL mode: %s", args.url)
             episode = rss_ingest.fetch_from_url(args.url, title=args.title)
-            result = run("manual", episode=episode, privacy_status=args.privacy)
+            result = run(
+                "manual", episode=episode, privacy_status=args.privacy,
+                render_slides=not args.no_slides, interactive=True,
+            )
         else:
-            feed_url = config.PODCAST_FEEDS.get(args.feed, args.feed)
-            used_guids = set(posted_history.load().keys())
-            skipped_guids: set[str] = set()
-            result = None
-            for ep_attempt in range(1, _AUTO_MAX_EPISODE_ATTEMPTS + 1):
-                picked = rss_ingest.pick_random_entry(
-                    feed_url, exclude_guids=used_guids | skipped_guids,
-                    host_name=config.PODCAST_HOSTS.get(args.feed),
-                )
-                if picked is None:
-                    raise RuntimeError(
-                        f"All episodes in the RSS window for '{args.feed}' have already been used. "
-                        "Delete tmp/posted_history.json to reset."
-                    )
-                feed_obj, entry, meta = picked
-                logger.info(
-                    "Episode attempt %d/%d: %r",
-                    ep_attempt, _AUTO_MAX_EPISODE_ATTEMPTS, meta.get("title"),
-                )
-                episode = rss_ingest.download_latest(feed_obj, entry)
-                try:
-                    result = run(args.feed, episode=episode, privacy_status=args.privacy)
-                    break
-                except ValueError as exc:
-                    if "CONTENT GATE" in str(exc) or "BRAND GATE" in str(exc):
-                        guid = meta.get("guid", "")
-                        logger.warning(
-                            "Episode %r failed quality gates after all retries, "
-                            "skipping to next episode: %s", meta.get("title"), exc,
-                        )
-                        if guid:
-                            skipped_guids.add(guid)
-                        cache_path = _plan_cache_path(episode["audio_path"])
-                        if os.path.exists(cache_path):
-                            os.remove(cache_path)
-                        continue
-                    raise
-            if result is None:
-                raise RuntimeError(
-                    f"Exhausted {_AUTO_MAX_EPISODE_ATTEMPTS} episode attempts for '{args.feed}'; "
-                    "no episode passed quality gates."
-                )
+            result = run(
+                args.feed, privacy_status=args.privacy,
+                render_slides=not args.no_slides, interactive=True,
+            )
     except Exception:
         # Log the full traceback (the preceding "[n/7]" line shows which step
         # was running) and exit non-zero so genuine pipeline failures never pass
