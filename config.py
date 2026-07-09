@@ -258,6 +258,9 @@ ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 BG_BLUR_RADIUS = 25
 BG_DARKEN = 0.35                     # brightness multiplier (0=black, 1=original)
 
+# --- Candidate shortlist (Stage 1 of the two-stage extraction) ---
+CANDIDATE_COUNT = 5                  # max ranked clip candidates find_candidates() surfaces
+
 # --- AI-generated themed backgrounds (Gemini 2.5 Flash Image / "Nano Banana") ---
 IMAGE_MODEL = "gemini-2.5-flash-image"
 IMAGE_PROMPT_COUNT = 4               # number of background prompts ai_extract emits
