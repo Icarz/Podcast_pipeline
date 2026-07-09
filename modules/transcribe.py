@@ -139,12 +139,21 @@ def _split_audio(audio_path: str, out_dir: str, segment_seconds: int) -> list[st
     nearest packet boundary, so real chunk durations vary slightly from
     ``segment_seconds`` -- the caller reads each chunk's actual length to offset
     timestamps rather than assuming an exact stride.
+
+    ``-map 0:a`` restricts the copy to the audio stream only. Some podcast MP3s
+    carry an embedded cover-art image as a second ("attached pic") stream; if
+    that image's codec data is malformed (seen in the wild: JPEG bytes
+    mislabeled as PNG in the ID3 tag), ffmpeg's segment muxer fails to write a
+    header for it and aborts the WHOLE split with "Could not write header" --
+    even though the image is irrelevant to transcription and the audio stream
+    itself is perfectly fine. Excluding it up front sidesteps the bug entirely.
     """
     pattern = os.path.join(out_dir, "chunk_%03d.mp3")
     subprocess.run(
         [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
             "-i", audio_path,
+            "-map", "0:a",
             "-f", "segment",
             "-segment_time", str(segment_seconds),
             "-c", "copy",
