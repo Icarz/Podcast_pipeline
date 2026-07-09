@@ -36,3 +36,6 @@ tmp_*.py
 Thumbs.db
 .vscode/
 .idea/
+
+# Superpowers subagent-driven-development scratch state (progress ledger, etc.)
+.superpowers/
