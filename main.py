@@ -129,7 +129,9 @@ def _load_or_build_transcript(audio_path: str) -> dict:
 def _print_candidates(candidates: list[dict]) -> None:
     print("\nCandidate clips:")
     for i, c in enumerate(candidates, 1):
-        print(f"  {i}. [{c['clip_start']:.1f}-{c['clip_end']:.1f}s] {c['hook']!r}")
+        flag = "  [!] METAPHOR HOOK — verify the payoff lands in the first sentence" \
+            if ai_extract.is_metaphor_hook(c["hook"]) else ""
+        print(f"  {i}. [{c['clip_start']:.1f}-{c['clip_end']:.1f}s] {c['hook']!r}{flag}")
         print(f"     exposes: {c.get('exposes', '')}")
         print(f"     reframe: {c.get('reframe', '')}")
         print(f"     payoff : {c.get('payoff', '')}")

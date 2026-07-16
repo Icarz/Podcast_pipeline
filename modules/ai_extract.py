@@ -222,14 +222,19 @@ COPY_SYSTEM_PROMPT = (
     "  - 'Why X happens' — explanatory, no stakes\n"
     "  - 'X things you didn't know about Y' — listicle, no emotional charge\n"
     "  - Any hook that could be a YouTube tutorial title\n\n"
-    "METAPHOR HOOK RULE: a hook built on a clever or abstract metaphor (e.g. 'Your fear is a GPS') "
-    "drives strong curiosity/clicks but is HIGH RISK for retention — tested data shows a metaphor "
-    "hook can win #1 in views (1,389) while losing badly on retention (39.2%, viewers bail in ~7s) "
-    "because the metaphor is never concretely cashed out. If you use a metaphor hook, the clip's "
-    "OPENING segment (clip_start) MUST immediately and concretely explain what the metaphor means "
-    "in practice — do not let it sit unexplained while the speaker builds up to it. If the "
-    "available transcript doesn't unpack the metaphor within the first few sentences of the clip, "
-    "prefer the neurological WINNING FORMULA instead.\n\n"
+    "METAPHOR HOOK RULE: treat a hook built on a clever or abstract metaphor/analogy (e.g. 'Your "
+    "fear is a GPS') as a FALLBACK, not a first choice — it is HIGH RISK for retention. This is "
+    "confirmed, repeated data, not a single incident: across two separate review rounds, metaphor "
+    "and abstract-wordplay hooks ('Your fear is a GPS', 'You're choosing your hard', 'You're not "
+    "running from emptiness, you're running from meaning') kept WINNING on views (1,200-1,400) "
+    "while landing in the WORST retention tier of the whole channel (16-22%, viewers bail in ~10s) "
+    "— because the payoff is never cashed out before the viewer leaves. DEFAULT to the "
+    "neurological WINNING FORMULA (or another direct/concrete structure above) whenever it fits "
+    "the content. Only reach for a metaphor/analogy hook when BOTH: (a) no concrete structure fits "
+    "this content, AND (b) the transcript's very FIRST sentence after clip_start already states "
+    "plainly what the metaphor means in practice — not the second sentence, not 'a few sentences "
+    "in'. If (b) isn't satisfiable from the available transcript, do not use a metaphor hook for "
+    "this clip at all — pick a concrete structure or a different clip.\n\n"
     "The hook must be writable in under 15 words. If it needs more, it's not sharp "
     "enough. The hook is NOT a summary of the clip — it's a provocative reframe that "
     "makes the clip's content feel urgent.\n\n"
@@ -741,6 +746,26 @@ def _validate(data: dict) -> None:
             f"clip window {window:.1f}s outside allowed range [{lo}, {hi}]s "
             f"(start={data['clip_start']}, end={data['clip_end']})"
         )
+
+
+_METAPHOR_HOOK_RE = re.compile(
+    r"\bis a\b|\bis an\b|\bis like\b|\bacts? like\b|\bworks? like\b|\bis basically\b",
+    re.IGNORECASE,
+)
+
+
+def is_metaphor_hook(hook: str) -> bool:
+    """Best-effort flag for analogy-style hooks ('Your fear is a GPS').
+
+    Two review rounds now confirm these hooks win on views (1,200-1,400) but
+    land in the worst retention tier (16-22%) because the payoff isn't cashed
+    out fast enough. This only catches literal 'X is a/like Y' analogy
+    phrasing — other abstract wordplay ('You're choosing your hard') carries
+    the same risk but isn't reliably regex-detectable, so a human reviewer
+    should still judge the rest of the shortlist by eye, not rely on this flag
+    alone.
+    """
+    return bool(_METAPHOR_HOOK_RE.search(hook or ""))
 
 
 def _brand_gate(data: dict) -> None:
@@ -1392,7 +1417,8 @@ if __name__ == "__main__":
     survivors = filter_candidates(candidates, transcript)
     print(f"\n=== {len(survivors)} survivor(s) after filtering ===")
     for i, c in enumerate(survivors, 1):
-        print(f"{i}. [{c['clip_start']:.1f}-{c['clip_end']:.1f}s] {c['hook']!r}")
+        flag = "  [!] METAPHOR HOOK" if is_metaphor_hook(c["hook"]) else ""
+        print(f"{i}. [{c['clip_start']:.1f}-{c['clip_end']:.1f}s] {c['hook']!r}{flag}")
 
     if not survivors:
         raise SystemExit("No candidates survived filtering.")
