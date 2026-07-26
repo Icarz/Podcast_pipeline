@@ -1,24 +1,27 @@
-"""AI background generation via Gemini image models ("Nano Banana").
+"""AI background generation via OpenAI's gpt-image-1 (primary background source).
 
 Takes the ``image_prompts`` produced by :mod:`ai_extract`, generates one image
-per prompt with the google-genai SDK, and writes them to ``tmp/bg_<n>.png`` for
-:mod:`video_gen` to use as themed video backgrounds.
+per prompt via the OpenAI Images API, and writes them to ``tmp/bg_<n>.png`` for
+:mod:`video_gen` to use as themed video backgrounds. Motion is added at render
+time by ``video_gen._image_background_layers`` (Ken Burns pan/zoom) — this
+module only produces the still frames.
 
 Resilience (so the pipeline never crashes mid-run):
-  * exponential-backoff retry on 429 / RESOURCE_EXHAUSTED,
-  * a model fallback chain (``IMAGE_MODELS``),
-  * a local gradient fallback when every model/retry is exhausted.
+  * exponential-backoff retry on 429 / 5xx,
+  * a local gradient fallback when the API key is missing or every retry fails.
 
 Simple per-file caching: a prompt whose ``tmp/bg_<n>.png`` already exists is
 reused (pass ``force=True`` to regenerate).
 """
 
+import base64
 import io
 import logging
 import os
 import time
 
 import numpy as np
+import requests
 from dotenv import load_dotenv
 from PIL import Image
 
@@ -28,14 +31,9 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Image models tried in order; we move to the next on a 429 or any error.
-# Edit this list to change the fallback chain.
-IMAGE_MODELS = [
-    "gemini-2.5-flash-image",
-    "gemini-3.1-flash-image-preview",
-]
+OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
 
-# Waits (seconds) between retries after a 429 on a single model: up to 4 retries.
+# Waits (seconds) between retries after a 429/5xx: up to 4 retries.
 RETRY_BACKOFFS = [2, 4, 8, 16]
 
 # Diagonal-gradient palettes (top-left -> bottom-right) for the local fallback.
@@ -47,87 +45,56 @@ _FALLBACK_PALETTES = [
 ]
 
 
-def _client():
-    """Build a google-genai client from GEMINI_API_KEY (lazy import)."""
-    from google import genai
-
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set (check your .env file)")
-    return genai.Client(api_key=api_key)
+def _api_key() -> str | None:
+    return os.environ.get("OPENAI_API_KEY")
 
 
-def _generate_config():
-    """Request a single 9:16 image; degrade gracefully on older SDK versions."""
-    from google.genai import types
-
-    try:
-        return types.GenerateContentConfig(
-            response_modalities=["Image"],
-            image_config=types.ImageConfig(aspect_ratio=config.IMAGE_ASPECT_RATIO),
-        )
-    except (TypeError, AttributeError):
-        # Older SDKs lack ImageConfig/aspect_ratio — fall back to defaults.
-        return types.GenerateContentConfig(response_modalities=["Image"])
+def _is_retryable(status_code: int) -> bool:
+    return status_code == 429 or status_code >= 500
 
 
-def _is_quota_error(exc: Exception) -> bool:
-    """True if ``exc`` looks like a 429 / RESOURCE_EXHAUSTED quota error."""
-    if getattr(exc, "code", None) == 429 or getattr(exc, "status_code", None) == 429:
-        return True
-    text = str(exc).upper()
-    return "429" in text or "RESOURCE_EXHAUSTED" in text
-
-
-def _extract_image_bytes(response) -> bytes | None:
-    """Pull the first inline image payload out of a generate_content response."""
-    for candidate in getattr(response, "candidates", None) or []:
-        content = getattr(candidate, "content", None)
-        for part in getattr(content, "parts", None) or []:
-            inline = getattr(part, "inline_data", None)
-            if inline is not None and getattr(inline, "data", None):
-                return inline.data
-    return None
-
-
-def _generate_one(client, model: str, prompt: str) -> bytes:
-    """Single generate_content call; raises on error, returns image bytes."""
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=_generate_config(),
+def _generate_one(api_key: str, prompt: str) -> bytes:
+    """Single OpenAI Images API call; raises on error, returns decoded PNG bytes."""
+    response = requests.post(
+        OPENAI_IMAGES_URL,
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={
+            "model": config.OPENAI_IMAGE_MODEL,
+            "prompt": prompt,
+            "size": config.OPENAI_IMAGE_SIZE,
+            "quality": config.OPENAI_IMAGE_QUALITY,
+            "n": 1,
+        },
+        timeout=config.OPENAI_IMAGE_TIMEOUT,
     )
-    image_bytes = _extract_image_bytes(response)
-    if not image_bytes:
-        raise RuntimeError("model returned no inline image data")
-    return image_bytes
+    if not response.ok:
+        exc = RuntimeError(f"OpenAI images API {response.status_code}: {response.text[:300]}")
+        exc.status_code = response.status_code  # type: ignore[attr-defined]
+        raise exc
+    b64 = response.json()["data"][0]["b64_json"]
+    return base64.b64decode(b64)
 
 
-def _generate_with_fallback(client, prompt: str, idx: int) -> tuple[bytes | None, str | None]:
-    """Try each model with backoff retries on 429.
-
-    Returns ``(image_bytes, model_name)`` on success, or ``(None, None)`` if
-    every model and retry is exhausted.
-    """
-    for model in IMAGE_MODELS:
-        for attempt in range(len(RETRY_BACKOFFS) + 1):
-            try:
-                image_bytes = _generate_one(client, model, prompt)
-                logger.info("Background %d generated with %s", idx, model)
-                return image_bytes, model
-            except Exception as exc:  # noqa: BLE001
-                if _is_quota_error(exc) and attempt < len(RETRY_BACKOFFS):
-                    wait = RETRY_BACKOFFS[attempt]
-                    logger.warning(
-                        "Background %d: %s rate-limited (429), retry in %ds (%d/%d)",
-                        idx, model, wait, attempt + 1, len(RETRY_BACKOFFS),
-                    )
-                    time.sleep(wait)
-                    continue
-                # Non-quota error, or retries exhausted -> move to next model.
-                logger.warning("Background %d: %s failed (%s); trying next model", idx, model, exc)
-                break
-    return None, None
+def _generate_with_retry(api_key: str, prompt: str, idx: int) -> bytes | None:
+    """Retry with backoff on 429/5xx. Returns image bytes, or None if exhausted."""
+    for attempt in range(len(RETRY_BACKOFFS) + 1):
+        try:
+            image_bytes = _generate_one(api_key, prompt)
+            logger.info("Background %d generated with %s", idx, config.OPENAI_IMAGE_MODEL)
+            return image_bytes
+        except Exception as exc:  # noqa: BLE001
+            status = getattr(exc, "status_code", None)
+            if status is not None and _is_retryable(status) and attempt < len(RETRY_BACKOFFS):
+                wait = RETRY_BACKOFFS[attempt]
+                logger.warning(
+                    "Background %d: gpt-image-1 error %s, retry in %ds (%d/%d)",
+                    idx, status, wait, attempt + 1, len(RETRY_BACKOFFS),
+                )
+                time.sleep(wait)
+                continue
+            logger.warning("Background %d: gpt-image-1 failed (%s)", idx, exc)
+            return None
+    return None
 
 
 def _write_fallback(path: str, idx: int) -> None:
@@ -152,15 +119,18 @@ def generate_backgrounds(prompts: list[str], out_dir: str = None, force: bool = 
     """Generate one background PNG per prompt; return the list of file paths.
 
     Files are written to ``out_dir/bg_<n>.png`` (1-indexed). Existing files are
-    reused unless ``force`` is True. If a prompt can't be generated (quota /
-    errors), a local gradient fallback is written so the pipeline always has a
-    full set of backgrounds and never crashes.
+    reused unless ``force`` is True. If a prompt can't be generated (missing
+    key, rate limit, error), a local gradient fallback is written so the
+    pipeline always has a full set of backgrounds and never crashes.
     """
     out_dir = out_dir or config.TMP_DIR
     os.makedirs(out_dir, exist_ok=True)
 
+    api_key = _api_key()
+    if not api_key:
+        logger.warning("OPENAI_API_KEY is not set - using gradient fallback for all backgrounds")
+
     paths: list[str] = []
-    client = None
     used_fallback = False
 
     for i, prompt in enumerate(prompts, start=1):
@@ -171,20 +141,11 @@ def generate_backgrounds(prompts: list[str], out_dir: str = None, force: bool = 
             paths.append(path)
             continue
 
-        # Lazily build the client; if that fails, fall straight back to gradients.
-        if client is None and not used_fallback:
-            try:
-                client = _client()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Gemini client unavailable (%s)", exc)
-
-        image_bytes, model = (None, None)
-        if client is not None:
-            image_bytes, model = _generate_with_fallback(client, prompt, i)
+        image_bytes = _generate_with_retry(api_key, prompt, i) if api_key else None
 
         if image_bytes:
             _save_png(image_bytes, path)
-            logger.info("Wrote background: %s (%s)", os.path.basename(path), model)
+            logger.info("Wrote background: %s (gpt-image-2)", os.path.basename(path))
         else:
             used_fallback = True
             _write_fallback(path, i)
@@ -193,7 +154,7 @@ def generate_backgrounds(prompts: list[str], out_dir: str = None, force: bool = 
         paths.append(path)
 
     if used_fallback:
-        logger.warning("Gemini image quota unavailable - using fallback backgrounds")
+        logger.warning("gpt-image-1 unavailable for one or more prompts - gradient fallback used")
 
     return paths
 

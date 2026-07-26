@@ -36,8 +36,8 @@ There is **no pytest suite**. Each module under `modules/` has a `__main__` smok
 .\venv\Scripts\python.exe -m modules.transcribe      # transcribe newest tmp/*.mp3
 .\venv\Scripts\python.exe -m modules.ai_extract      # transcribe + extract clip plan
 .\venv\Scripts\python.exe -m modules.slide_gen       # render 5 slides from built-in SAMPLE_HIGHLIGHTS (no AI calls; Pexels photos if PEXELS_API_KEY set)
-.\venv\Scripts\python.exe -m modules.pexels_bg       # fetch stock VIDEO backgrounds from cached plan (video_queries)
-.\venv\Scripts\python.exe -m modules.image_gen       # generate Gemini/gradient backgrounds from cached plan (image_prompts)
+.\venv\Scripts\python.exe -m modules.pexels_bg       # (no longer in the live background chain; still used standalone/for slide photos)
+.\venv\Scripts\python.exe -m modules.image_gen       # generate gpt-image-1/gradient backgrounds from cached plan (image_prompts) — primary background source
 .\venv\Scripts\python.exe -m modules.video_gen       # full render of newest episode + 3 sample frames
 ```
 
@@ -69,7 +69,7 @@ as `tmp/<basename>.plan.json`. `posted_history.mark_used()` retires the episode
 once a candidate is approved and Stage 2 succeeds (or immediately, for a
 rejected/empty-shortlist episode), so it can never be re-selected, even if the
 YouTube upload later fails.
-4. `background.select_backgrounds(highlights)` — Pexels video → Gemini → gradient.
+4. `background.select_backgrounds(highlights)` — gpt-image-1 AI image → gradient.
 5. `video_gen.build_video(...)` — the karaoke MP4.
 6. `slide_gen.build_slides(highlights)` — the 6-PNG carousel.
 Publish is then best-effort (R2 + YouTube); failures are logged but never fatal.
@@ -181,12 +181,14 @@ Both follow the same concept→filmable-scene art-director rules in `ai_extract.
 ### Background selection — ordered fallback chain
 
 `background.select_backgrounds()` is a degrade-never chain (see `modules/background.py`):
-1. **Pexels stock video** (`pexels_bg.fetch_backgrounds`, primary) — uses `video_queries` (falls back to `search_queries` only for older cached plans that predate `video_queries`); needs `PEXELS_API_KEY`; returns `None` if it yields nothing. Per-query, Pexels searches up to 2 pages of results before giving up.
-   - **Pixabay fallback** (`pixabay_bg._find_video`, per-query) — if Pexels (both pages) yields nothing for a query, `_acquire_for_query` tries the same query against the Pixabay video API (`PIXABAY_API_KEY`). Same two-tier dedup and quality gate apply. This is a per-query fallback inside `pexels_bg`, not a separate pipeline stage.
-2. **Gemini AI image** (`image_gen.generate_backgrounds`, fed `image_prompts`) — model fallback chain in `IMAGE_MODELS`.
-3. **Local gradient PNGs** (`image_gen` fallback) — always succeeds.
+1. **OpenAI `gpt-image-1` AI image** (`image_gen.generate_backgrounds`, primary) — generates one on-brief image per `image_prompts` entry (`config.IMAGE_PROMPT_COUNT` = 4) via the OpenAI Images API (`config.OPENAI_IMAGE_MODEL`/`OPENAI_IMAGE_SIZE`/`OPENAI_IMAGE_QUALITY`, currently `gpt-image-1` / `1024x1536` / `medium`); needs `OPENAI_API_KEY`. Retries on 429/5xx with backoff (`RETRY_BACKOFFS`).
 
-The returned list is **homogeneous**: either all `.mp4` (video) or all `.png` (image). `video_gen._background_layers()` dispatches on the first path's extension, so never mix types. Known constraint: the Gemini image quota on this account hard-429s, so steps 2-3 almost always land on gradients — **Pexels video is the de-facto primary** and the gradient PNG path is the real safety net.
+   **`image_prompts` art direction (locked brand style, added 2026-07-26 — see the `IMAGE_PROMPTS` block in `ai_extract.COPY_SYSTEM_PROMPT`):** every one of the 4 images is a **vintage halftone comic-book illustration** — flat colors, halftone dot shading, bold black ink linework, paper-grain texture; NOT photorealistic. Palette is **fixed, never varies**: mustard yellow, olive/forest green, burnt rust-orange, cream/beige, worn brown leather — muted and retro, never bright/neon. The recurring subject is **one anthropomorphic wolf character** — upright, human posture, ordinary clothes, wolf head — always alone (no humans, no other animals, no second wolf), staged in mundane domestic interiors/exteriors (couch, desk by a window, doorway, kitchen, balcony) chosen via the same per-quarter content-first analysis as `VIDEO_QUERIES` (each image's scene must illustrate that quarter's specific spoken concept, not a generic mood shot). Hard blacklist specific to `image_prompts`: no skull/skeleton/death imagery, no vices, no slumped/defeated posture, **no legible text baked into the image** (the karaoke captions are composited separately in `video_gen.py` — baked-in text would visually clash), no gore, no extra figures. This is a *separate* blacklist from the human-figure one below, since there's no human figure in these images at all.
+2. **Local gradient PNGs** (`image_gen` fallback) — always succeeds; used when the key is missing or every retry is exhausted.
+
+The returned list is **homogeneous**: always `.png` (image). `video_gen._background_layers()` dispatches on the first path's extension — `_image_background_layers()` applies the Ken Burns pan/zoom (see below) to whatever 4 stills it's given, whether AI-generated or gradient, so no changes were needed there to switch sources.
+
+**Pexels/Pixabay stock video is no longer wired into `background.py`** (replaced 2026-07-26 — Pexels footage was unpredictable and repeatedly violated content rules, e.g. a smoking subject slipping through the quality gate, or a near-static clip with no motion). `pexels_bg.py`/`pixabay_bg.py` still exist and still power `slide_gen.py`'s carousel **slide photos** (`search_queries`, unchanged) — only the **video background** source changed. `video_queries` in `ai_extract`'s schema is now unused by the live pipeline (kept for schema/back-compat with old cached plans; nothing currently reads it).
 
 ### video_gen is the core (1080×1920 karaoke clip)
 
@@ -216,19 +218,19 @@ The returned list is **homogeneous**: either all `.mp4` (video) or all `.png` (i
 ## External services & secrets
 
 Copy `.env.example` → `.env`. Keys grouped:
-- **AI:** `ANTHROPIC_API_KEY` (Claude), `GROQ_API_KEY` (Whisper), `GEMINI_API_KEY` (images).
-- **Backgrounds:** `PEXELS_API_KEY` (stock video + slide photos), `PIXABAY_API_KEY` (video fallback when Pexels exhausted; optional).
+- **AI:** `ANTHROPIC_API_KEY` (Claude), `GROQ_API_KEY` (Whisper), `OPENAI_API_KEY` (gpt-image-1 backgrounds — primary background source).
+- **Backgrounds:** `PEXELS_API_KEY` (slide photos only now; video search is unused by the live background chain), `PIXABAY_API_KEY` (unused by the live chain; optional, kept for `pexels_bg`'s per-query fallback if re-enabled).
 - **Storage (R2, S3-compatible via boto3):** `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_ACCESS_KEY_ID`, `CLOUDFLARE_R2_SECRET_ACCESS_KEY`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_PUBLIC_URL`.
 - **YouTube Data API (OAuth):** `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`. (Uploads target whatever channel the refresh token was authorized for — no channel ID needed.)
 - **Meta Graph API (Instagram Reels):** `META_APP_ID`, `META_APP_SECRET`, `META_ACCESS_TOKEN`, `META_IG_USER_ID`.
 
 Modules call `load_dotenv()` themselves so they work standalone.
 
-Model IDs: Claude `claude-sonnet-4-6` (`config.EXTRACT_MODEL`), Groq `whisper-large-v3` (`transcribe.MODEL`), Gemini image `gemini-2.5-flash-image` with a `gemini-3.1-flash-image-preview` fallback (`image_gen.IMAGE_MODELS`). The original `claude-sonnet-4-20250514` 404s on this account (retired) — keep the replacement.
+Model IDs: Claude `claude-sonnet-4-6` (`config.EXTRACT_MODEL`), Groq `whisper-large-v3` (`transcribe.MODEL`), OpenAI `gpt-image-1` (`config.OPENAI_IMAGE_MODEL`, `1024x1536` @ `medium` quality — `image_gen.py`). The original `claude-sonnet-4-20250514` 404s on this account (retired) — keep the replacement.
 
 ## Gotchas / current state
 
-- **Gemini image quota is effectively zero on this account** — `image_gen` hard-429s through its retry/model chain and falls back to local gradient PNGs. In practice Pexels stock video is the working background source; treat gradients as the safety net, not Gemini images.
+- **Backgrounds switched from Pexels stock video to `gpt-image-1` AI images on 2026-07-26.** Reason: Pexels footage was uncontrollable relative to clip content and repeatedly broke content rules in ways the quality gate couldn't catch (a smoking subject slipped through; a near-static clip held nearly frozen for 13s of a Short). AI-generated images are on-brief every time and cost ~$0.25/short (4 images @ medium quality) — well inside a $10/month budget at current posting cadence. Trade-off accepted knowingly: stills + Ken Burns pan/zoom, not real captured motion. `PEXELS_API_KEY` is still needed for `slide_gen.py`'s carousel slide photos, which are unchanged.
 - **A suspected "whole-clip caption/audio desync" turned out to be a false positive from a flawed verification method — corrected here so it isn't re-litigated.** An investigation using `ffmpeg -vf fps=1/3` to bulk-sample frames appeared to show captions running ~1-1.5s ahead of the audio for an entire clip, which led to `MAX_CHUNK_SECONDS` being lowered from 1200 to 300 (kept — harmless, just more/shorter Groq requests) on the theory that Whisper's word-timestamps drift within a long single transcription request. A later re-verification using precise exact-seek frame extraction (`ffmpeg -ss T -frames:v 1`, not the `fps` filter) showed **perfect sub-100ms caption/audio sync throughout an entire clip**, including deep into it — directly contradicting the original finding. **The `fps` filter's output frame timestamps do not reliably correspond to simple multiples of the sampling interval starting at 0**; using it for precise sync verification was itself the bug. If a caption/audio sync issue is ever reported again, verify with exact-seek single-frame extraction, never `fps`-filter bulk sampling, before concluding there's a real desync.
 - **The real caption bug found during that same re-verification: out-of-order Whisper word timestamps can cause two caption blocks to render on top of each other.** Whisper occasionally emits a word with an earlier `start` than the word immediately before it in the transcript (confirmed case: word "that" timestamped before the preceding word "being", both correct in reading order). `video_gen.py`'s caption-clip loop assumes non-decreasing word start times when computing each word's on-screen window; an out-of-order word can start its caption clip before the previous word's clip has finished, producing a garbled overlap for a fraction of a second. Fixed at the source: `transcribe.transcribe()` now runs every returned `words` list through `_enforce_monotonic_words()`, which clamps each word's start/end to at least the previous word's end (in original text order — never reorders words, which would garble the sentence). This is now a guaranteed invariant of `transcribe()`'s return value.
 - **Background music is mixed at −18 dB** (`MUSIC_GAIN_DB`) under the full-volume voice, with 1.0s/1.5s fades. The single track lives at `assets/music/background.mp3`; if it's missing the render silently goes voice-only.

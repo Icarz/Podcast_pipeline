@@ -261,8 +261,11 @@ BG_DARKEN = 0.35                     # brightness multiplier (0=black, 1=origina
 # --- Candidate shortlist (Stage 1 of the two-stage extraction) ---
 CANDIDATE_COUNT = 5                  # max ranked clip candidates find_candidates() surfaces
 
-# --- AI-generated themed backgrounds (Gemini 2.5 Flash Image / "Nano Banana") ---
-IMAGE_MODEL = "gemini-2.5-flash-image"
+# --- AI-generated themed backgrounds (OpenAI gpt-image-1 — primary background source) ---
+OPENAI_IMAGE_MODEL = "gpt-image-1"
+OPENAI_IMAGE_SIZE = "1024x1536"      # portrait, closest match to the 9:16 video frame
+OPENAI_IMAGE_QUALITY = "medium"      # low/medium/high - medium is the cost/quality default
+OPENAI_IMAGE_TIMEOUT = 90            # seconds per HTTP request
 IMAGE_PROMPT_COUNT = 4               # number of background prompts ai_extract emits
 SEARCH_QUERY_COUNT = 5               # one art-directed stock-photo query per carousel slide
 VIDEO_QUERY_COUNT = 4                # stock-VIDEO background SLOTS to actually fill
@@ -274,7 +277,8 @@ VIDEO_QUERY_EXTRACT_COUNT = VIDEO_QUERY_COUNT + VIDEO_QUERY_SPARE
 IMAGE_ASPECT_RATIO = "9:16"          # vertical, matches the video frame
 BG_IMAGE_PREFIX = "bg_"             # tmp/bg_<n>.png  /  tmp/bg_<n>.mp4
 
-# --- Pexels stock video (primary background source) ---
+# --- Pexels stock video/photo (video search now unused by background.py; photo
+# search still feeds slide_gen.py's carousel slide backgrounds) ---
 PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
 # Photo search (still images for the carousel slide backgrounds).
 PEXELS_PHOTO_SEARCH_URL = "https://api.pexels.com/v1/search"
