@@ -381,8 +381,8 @@ def run(
     if guid and feed_arg != "manual":
         posted_history.mark_used(guid=guid, feed=feed_arg, title=episode.get("title", ""))
 
-    # 4) Background selection: gpt-image-1 image -> gradient chain.
-    logger.info("[4/6] Backgrounds: select (gpt-image-1 -> gradient)")
+    # 4) Background selection: gpt-image-2 image -> gradient chain.
+    logger.info("[4/6] Backgrounds: select (gpt-image-2 -> gradient)")
     audio_basename = os.path.splitext(os.path.basename(audio_path))[0]
     backgrounds = background.select_backgrounds(highlights, basename=audio_basename)
     bg_kind = "video" if backgrounds and backgrounds[0].lower().endswith(".mp4") else "image"

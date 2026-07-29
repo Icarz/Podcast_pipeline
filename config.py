@@ -261,8 +261,8 @@ BG_DARKEN = 0.35                     # brightness multiplier (0=black, 1=origina
 # --- Candidate shortlist (Stage 1 of the two-stage extraction) ---
 CANDIDATE_COUNT = 5                  # max ranked clip candidates find_candidates() surfaces
 
-# --- AI-generated themed backgrounds (OpenAI gpt-image-1 — primary background source) ---
-OPENAI_IMAGE_MODEL = "gpt-image-1"
+# --- AI-generated themed backgrounds (OpenAI gpt-image-2 — primary background source) ---
+OPENAI_IMAGE_MODEL = "gpt-image-2"
 OPENAI_IMAGE_SIZE = "1024x1536"      # portrait, closest match to the 9:16 video frame
 OPENAI_IMAGE_QUALITY = "medium"      # low/medium/high - medium is the cost/quality default
 OPENAI_IMAGE_TIMEOUT = 90            # seconds per HTTP request

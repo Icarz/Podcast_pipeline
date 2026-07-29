@@ -1,4 +1,4 @@
-"""AI background generation via OpenAI's gpt-image-1 (primary background source).
+"""AI background generation via OpenAI's gpt-image-2 (primary background source).
 
 Takes the ``image_prompts`` produced by :mod:`ai_extract`, generates one image
 per prompt via the OpenAI Images API, and writes them to ``tmp/bg_<n>.png`` for
@@ -89,12 +89,12 @@ def _generate_with_retry(api_key: str, prompt: str, idx: int) -> bytes | None:
             if status is not None and _is_retryable(status) and attempt < len(RETRY_BACKOFFS):
                 wait = RETRY_BACKOFFS[attempt]
                 logger.warning(
-                    "Background %d: gpt-image-1 error %s, retry in %ds (%d/%d)",
-                    idx, status, wait, attempt + 1, len(RETRY_BACKOFFS),
+                    "Background %d: %s error %s, retry in %ds (%d/%d)",
+                    idx, config.OPENAI_IMAGE_MODEL, status, wait, attempt + 1, len(RETRY_BACKOFFS),
                 )
                 time.sleep(wait)
                 continue
-            logger.warning("Background %d: gpt-image-1 failed (%s)", idx, exc)
+            logger.warning("Background %d: %s failed (%s)", idx, config.OPENAI_IMAGE_MODEL, exc)
             return None
     return None
 
@@ -165,7 +165,7 @@ def generate_backgrounds(
         paths.append(path)
 
     if used_fallback:
-        logger.warning("gpt-image-1 unavailable for one or more prompts - gradient fallback used")
+        logger.warning("%s unavailable for one or more prompts - gradient fallback used", config.OPENAI_IMAGE_MODEL)
 
     return paths
 
