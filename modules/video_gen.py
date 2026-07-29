@@ -673,8 +673,9 @@ if __name__ == "__main__":
         line = f"  {i}. {kw}  ->  {q}"
         print(line.encode("ascii", "replace").decode("ascii"))
 
-    # Ordered chain: Pexels video -> Gemini image -> gradient.
-    backgrounds = background.select_backgrounds(highlights)
+    # Ordered chain: gpt-image-1 image -> gradient.
+    audio_basename = os.path.splitext(os.path.basename(audio_path))[0]
+    backgrounds = background.select_backgrounds(highlights, basename=audio_basename)
     src = "Pexels video" if backgrounds[0].lower().endswith(".mp4") else "Gemini/gradient image"
     print(f"\nBackground source: {src}")
     print(f"Backgrounds: {len(backgrounds)} -> {[os.path.basename(b) for b in backgrounds]}", flush=True)

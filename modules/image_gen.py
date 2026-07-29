@@ -10,8 +10,10 @@ Resilience (so the pipeline never crashes mid-run):
   * exponential-backoff retry on 429 / 5xx,
   * a local gradient fallback when the API key is missing or every retry fails.
 
-Simple per-file caching: a prompt whose ``tmp/bg_<n>.png`` already exists is
-reused (pass ``force=True`` to regenerate).
+Simple per-file caching, namespaced per episode: a prompt whose
+``tmp/<episode-basename>_bg_<n>.png`` already exists is reused (pass
+``force=True`` to regenerate). Omitting ``basename`` falls back to the bare
+``tmp/bg_<n>.png`` name used by this module's own smoke-test harness below.
 """
 
 import base64
@@ -115,13 +117,20 @@ def _save_png(image_bytes: bytes, path: str) -> None:
     im.save(path, "PNG")
 
 
-def generate_backgrounds(prompts: list[str], out_dir: str = None, force: bool = False) -> list[str]:
+def generate_backgrounds(
+    prompts: list[str], out_dir: str = None, basename: str = None, force: bool = False,
+) -> list[str]:
     """Generate one background PNG per prompt; return the list of file paths.
 
-    Files are written to ``out_dir/bg_<n>.png`` (1-indexed). Existing files are
-    reused unless ``force`` is True. If a prompt can't be generated (missing
-    key, rate limit, error), a local gradient fallback is written so the
-    pipeline always has a full set of backgrounds and never crashes.
+    Files are written to ``out_dir/<basename>_bg_<n>.png`` (1-indexed), or bare
+    ``out_dir/bg_<n>.png`` when ``basename`` is omitted. Existing files are
+    reused unless ``force`` is True. **Always pass the episode's audio
+    basename from pipeline callers** — without it every episode collides on
+    the same 4 filenames and silently reuses a previous episode's images
+    regardless of this run's ``image_prompts`` (the per-clip art direction
+    would never actually take effect). If a prompt can't be generated
+    (missing key, rate limit, error), a local gradient fallback is written so
+    the pipeline always has a full set of backgrounds and never crashes.
     """
     out_dir = out_dir or config.TMP_DIR
     os.makedirs(out_dir, exist_ok=True)
@@ -130,11 +139,13 @@ def generate_backgrounds(prompts: list[str], out_dir: str = None, force: bool = 
     if not api_key:
         logger.warning("OPENAI_API_KEY is not set - using gradient fallback for all backgrounds")
 
+    prefix = f"{basename}_{config.BG_IMAGE_PREFIX}" if basename else config.BG_IMAGE_PREFIX
+
     paths: list[str] = []
     used_fallback = False
 
     for i, prompt in enumerate(prompts, start=1):
-        path = os.path.join(out_dir, f"{config.BG_IMAGE_PREFIX}{i}.png")
+        path = os.path.join(out_dir, f"{prefix}{i}.png")
 
         if not force and os.path.exists(path) and os.path.getsize(path) > 0:
             logger.info("Background cached, skipping generation: %s", os.path.basename(path))
