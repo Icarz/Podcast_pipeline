@@ -1,54 +1,37 @@
-"""Podcast automation pipeline orchestrator.
+"""Synthetic-script video pipeline orchestrator.
 
-End-to-end flow for an episode of a feed:
-    RSS ingest -> transcribe -> AI extract -> background select
-    -> video render (karaoke MP4) -> slide deck (PNGs)
+Two-command flow, split around a manual ElevenLabs voiceover step:
 
-Publishing is fully MANUAL by design (2026-07-31): the user uploads the Short
-and posts the carousel by hand, so the run ends with a manual-post checklist
-of local file paths — no YouTube/Meta/R2 API calls (those modules were
-deleted; see git history if ever needed again).
+    main.py
+        Pick a topic, write the full script + copy + art-direction package
+        (modules.script_gen), save the narration text for you to paste into
+        ElevenLabs, cache the package, log it to the dedup ledger.
 
-Run:
-    .\\venv\\Scripts\\python.exe main.py mindset_mentor   # feed key
-    .\\venv\\Scripts\\python.exe main.py https://...rss    # or a raw RSS URL
-    .\\venv\\Scripts\\python.exe main.py --url https://...mp3 --title "..."  # direct audio, no RSS
-    .\\venv\\Scripts\\python.exe main.py <feed> --scan     # bank Stage-1 candidates
-    .\\venv\\Scripts\\python.exe main.py --bank            # review the bank + render
+    main.py --render <slug> <audio_path>
+        Take the ElevenLabs audio you downloaded, transcribe it (Groq
+        Whisper -- for word-level caption timestamps only, not content),
+        generate the 6 wolf background images, render the karaoke MP4, then
+        the 6-slide carousel.
 
-Re-runs reuse the tmp/<basename>.plan.json cache that this module (and the
-video_gen harness) writes, so Groq/Claude are only hit once per episode.
+Publishing is fully MANUAL by design: the run ends with a manual-post
+checklist of local file paths -- no upload APIs.
 """
 
 import json
 import logging
 import os
 import sys
-from datetime import date
 
-import anthropic
 from dotenv import load_dotenv
 
 import config
-from modules import (
-    ai_extract,
-    background,
-    candidate_bank,
-    posted_history,
-    rss_ingest,
-    slide_gen,
-    transcribe,
-    video_gen,
-)
-
-# Mon=0 .. Sun=6 (matches date.weekday() and config.ROTATION keys).
-_WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+from modules import background, script_gen, script_history, slide_gen, transcribe, video_gen
 
 load_dotenv()
 
-# Episode titles often contain non-ASCII (curly quotes, em dashes); the Windows
-# console defaults to cp1252 and would crash on them. Force UTF-8 on the console
-# streams so logging/printing a title never takes down the run.
+# Episode/script titles often contain non-ASCII (curly quotes, em dashes); the
+# Windows console defaults to cp1252 and would crash on them. Force UTF-8 on
+# the console streams so logging/printing a title never takes down the run.
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -68,143 +51,65 @@ logging.basicConfig(
 logger = logging.getLogger("pipeline")
 
 
-def _display_name(feed_arg: str) -> str:
-    """The brand name for the watermark.
-
-    ALWAYS the single-source brand (``config.BRAND_NAME``) — every video the
-    pipeline publishes must carry the Icarus Wings watermark, regardless of
-    source. This holds for configured feed keys, raw RSS URLs, and direct
-    ``--url`` ("manual") runs alike.
-    """
-    return config.BRAND_NAME
-
-
-def _plan_cache_path(audio_path: str) -> str:
-    """The final combined plan cache: tmp/<basename>.plan.json (video_gen reads
-    this too). Written only once, after Stage 2 succeeds for an approved
-    candidate."""
-    return os.path.splitext(audio_path)[0] + ".plan.json"
+def _slugify(text: str) -> str:
+    """Filesystem-safe slug from a title, e.g. 'Your Brain Replays That!' ->
+    'your_brain_replays_that'. Same scheme video_gen already uses for output
+    filenames, reused here as the cache key so both stay in sync by eye."""
+    slug = "".join(c if c.isalnum() else "_" for c in text.lower())
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug.strip("_")[:80] or "script"
 
 
-def _transcript_cache_path(audio_path: str) -> str:
-    """Transcribe-only cache: tmp/<basename>.transcript.json. Separate from the
-    plan cache so re-running Stage 1 (e.g. across a reject-all candidate loop,
-    or a second manual run before the episode is approved) never re-hits Groq,
-    even though nothing has been approved yet."""
-    return os.path.splitext(audio_path)[0] + ".transcript.json"
+def _script_txt_path(slug: str) -> str:
+    return os.path.join(config.TMP_DIR, f"{slug}.script.txt")
 
 
-def _write_plan(cache_path: str, transcript: dict, highlights: dict) -> None:
-    with open(cache_path, "w", encoding="utf-8") as f:
-        json.dump({"transcript": transcript, "highlights": highlights}, f)
+def _plan_cache_path(slug: str) -> str:
+    return os.path.join(config.TMP_DIR, f"{slug}.plan.json")
 
 
-def _load_or_build_transcript(audio_path: str) -> dict:
-    """Return the transcript dict, reusing a cache when present.
+def generate() -> str:
+    """Step 1: pick a topic, write the package, cache it, log it. Returns the
+    slug so the caller can print the exact --render command."""
+    logger.info("[1/2] Generating script (Claude %s)", config.EXTRACT_MODEL)
+    highlights = script_gen.generate_script_with_retry()
 
-    Transcribe-only (Groq). The candidate/copy extraction (Claude) happens
-    later, after a human picks a candidate, and must not force a
-    re-transcription just because the pick changes or is rejected.
-    """
-    cache_path = _transcript_cache_path(audio_path)
-    if os.path.exists(cache_path):
-        logger.info("Transcript cache HIT: %s (skipping Groq)", os.path.basename(cache_path))
-        with open(cache_path, encoding="utf-8") as f:
-            return json.load(f)
+    slug = _slugify(highlights["title"])
+    os.makedirs(config.TMP_DIR, exist_ok=True)
 
-    logger.info("[2/6] Transcribe (Groq Whisper): %s", os.path.basename(audio_path))
-    transcript = transcribe.transcribe(audio_path)
-    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-    with open(cache_path, "w", encoding="utf-8") as f:
-        json.dump(transcript, f)
-    logger.info("Cached transcript: %s", os.path.basename(cache_path))
-    return transcript
+    script_path = _script_txt_path(slug)
+    with open(script_path, "w", encoding="utf-8") as f:
+        f.write(highlights["script"] + "\n")
+    logger.info("Wrote narration script: %s", script_path)
 
+    plan_path = _plan_cache_path(slug)
+    with open(plan_path, "w", encoding="utf-8") as f:
+        json.dump({"highlights": highlights}, f)
+    logger.info("Cached plan: %s", plan_path)
 
-def _print_candidates(candidates: list[dict]) -> None:
-    print("\nCandidate clips:")
-    for i, c in enumerate(candidates, 1):
-        flag = "  [!] METAPHOR HOOK — verify the payoff lands in the first sentence" \
-            if ai_extract.is_metaphor_hook(c["hook"]) else ""
-        print(f"  {i}. [{c['clip_start']:.1f}-{c['clip_end']:.1f}s] {c['hook']!r}{flag}")
-        print(f"     exposes: {c.get('exposes', '')}")
-        print(f"     reframe: {c.get('reframe', '')}")
-        print(f"     payoff : {c.get('payoff', '')}")
+    script_history.record(
+        topic_cluster=highlights["topic_cluster"],
+        hook=highlights["hook"],
+        title=highlights["title"],
+    )
 
-
-def _find_and_pick_candidate(transcript: dict, interactive: bool = True) -> dict | None:
-    """Run Stage 1 (find + filter) and return the chosen candidate, or ``None``
-    if there are no survivors or the human rejects every candidate.
-
-    ``interactive=False`` (used by ``--auto``) skips the prompt and takes the
-    top-ranked survivor automatically — no human is present for scheduled runs.
-    """
-    candidates = ai_extract.find_candidates(transcript)
-    survivors = ai_extract.filter_candidates(candidates, transcript)
-    if not survivors:
-        logger.info("No viable candidates after filtering (%d raw)", len(candidates))
-        return None
-
-    if not interactive:
-        logger.info("Auto mode: taking top candidate (%d survivor(s))", len(survivors))
-        return survivors[0]
-
-    _print_candidates(survivors)
-    choice = input("Pick a number, or 0 to reject all: ").strip()
-    if choice == "0":
-        return None
-    try:
-        idx = int(choice) - 1
-    except ValueError:
-        idx = -1
-    if 0 <= idx < len(survivors):
-        return survivors[idx]
-    print("Invalid choice; treating as reject-all.")
-    return None
-
-
-def _pick_episode_and_candidate(feed_arg: str, interactive: bool = True) -> tuple[dict, dict, dict]:
-    """Loop episodes until a candidate is approved, or the RSS window is exhausted.
-
-    Returns ``(episode, transcript, chosen_candidate)``. Raises ``RuntimeError``
-    when every episode in the RSS window has been used/rejected. A rejected
-    episode (empty shortlist, or the human rejects every candidate) is retired
-    via ``posted_history.mark_used`` — same permanent-skip treatment as a
-    published episode, per the design spec.
-    """
-    feed_url = config.PODCAST_FEEDS.get(feed_arg, feed_arg)
-    host_name = config.PODCAST_HOSTS.get(feed_arg)
-    # Exclude both posted episodes AND bank-scanned episodes — a banked
-    # episode's clips are consumed via --bank, so re-picking it here would
-    # double-spend its candidates.
-    used_guids = set(posted_history.load().keys()) | candidate_bank.scanned_guids()
-
-    while True:
-        picked = rss_ingest.pick_random_entry(feed_url, exclude_guids=used_guids, host_name=host_name)
-        if picked is None:
-            raise RuntimeError(
-                f"All episodes in the RSS window for '{feed_arg}' have already been used. "
-                "Delete tmp/posted_history.json to reset."
-            )
-        feed_obj, entry, meta = picked
-        guid = meta.get("guid", "")
-        logger.info("[1/6] Ingest: candidate episode %r (guid=%s)", meta.get("title"), guid)
-        episode = rss_ingest.download_latest(feed_obj, entry)
-        transcript = _load_or_build_transcript(episode["audio_path"])
-
-        candidate = _find_and_pick_candidate(transcript, interactive=interactive)
-        if candidate is None:
-            if guid:
-                posted_history.mark_used(guid=guid, feed=feed_arg, title=episode.get("title", ""))
-                used_guids.add(guid)
-            print(f"No candidate approved for {episode.get('title')!r} — trying next episode.")
-            continue
-
-        return episode, transcript, candidate
+    print("\n" + "=" * 64)
+    print("SCRIPT READY")
+    print("=" * 64)
+    print(f"Title      : {highlights['title']}")
+    print(f"Topic      : {highlights['topic_cluster']}")
+    print(f"Hook       : {highlights['hook']}")
+    print(f"Script file: {script_path}")
+    print("\nNext steps:")
+    print(f"  1. Paste the contents of {script_path} into ElevenLabs.")
+    print("  2. Download the generated audio.")
+    print(f"  3. Run: python main.py --render {slug} <path-to-audio-file>")
+    print("=" * 64, flush=True)
+    return slug
 
 
 def _log_manual_post(video_path: str, slides: list[str]) -> None:
-    """Log the manual-post checklist — publishing is fully by hand by design."""
     lines = [
         "MANUAL POST (all platforms, by hand):",
         f"  Short/Reel video : {video_path}",
@@ -214,385 +119,61 @@ def _log_manual_post(video_path: str, slides: list[str]) -> None:
     logger.info("\n".join(lines))
 
 
-def run(
-    feed_arg: str,
-    episode: dict | None = None,
-    render_slides: bool = True,
-    interactive: bool = True,
-) -> dict:
-    """Run ingest -> render -> publish for an episode of ``feed_arg``.
-
-    ``feed_arg`` is a key in ``config.PODCAST_FEEDS`` or a raw RSS URL.
-
-    When ``episode`` is ``None`` (RSS mode — feed runs and ``--auto``), episode
-    AND candidate-clip selection are both handled internally by
-    :func:`_pick_episode_and_candidate`, looping to another episode whenever a
-    candidate shortlist comes up empty or (interactively) every candidate is
-    rejected. If Stage 2 copywriting (:func:`ai_extract.extract_copy_with_retry`)
-    exhausts its retries for the chosen candidate, the episode is retired and
-    the picker runs again for a fresh candidate/episode.
-
-    When ``episode`` is given (``--url`` direct-audio mode: there is only one
-    episode, nothing to fall back to), a plan-cache hit short-circuits both
-    stages entirely (e.g. a second run of the same URL); on a cache miss, a
-    single Stage-1 pick and Stage-2 copy pass are attempted and any failure
-    (reject-all, or Stage 2 exhaustion) raises immediately rather than looping.
-
-    ``interactive=False`` (used by ``run_auto``) disables the human prompt and
-    auto-picks the top-ranked surviving candidate at each Stage 1 pass.
-    ``render_slides=False`` skips the carousel deck entirely (video-only run) —
-    the summary printer already treats an empty ``slides`` list as a no-op.
-    Returns a summary dict.
-    """
-    logger.info("Starting pipeline | feed=%s", feed_arg)
-
-    if episode is not None:
-        # --url direct-audio mode: exactly one episode, no RSS loop.
-        audio_path = episode["audio_path"]
-        cache_path = _plan_cache_path(audio_path)
-        if os.path.exists(cache_path):
-            logger.info("[2-6/6] Plan cache HIT: %s (skipping Groq + Claude)", os.path.basename(cache_path))
-            with open(cache_path, encoding="utf-8") as f:
-                cached = json.load(f)
-            transcript, highlights = cached["transcript"], cached["highlights"]
-        else:
-            transcript = _load_or_build_transcript(audio_path)
-            logger.info("[3/6] Find + filter clip candidates (Claude %s)", config.EXTRACT_MODEL)
-            candidate = _find_and_pick_candidate(transcript, interactive=interactive)
-            if candidate is None:
-                raise RuntimeError(
-                    f"No candidate approved for {episode.get('title')!r}; "
-                    "nothing to fall back to in --url mode."
-                )
-            logger.info("Extracting copy (Claude %s) for approved candidate", config.EXTRACT_MODEL)
-            highlights = ai_extract.extract_copy_with_retry(
-                transcript, candidate["clip_start"], candidate["clip_end"], candidate,
-            )
-            _write_plan(cache_path, transcript, highlights)
-            logger.info("Cached transcript + plan: %s", os.path.basename(cache_path))
-    else:
-        # RSS mode (feed runs and --auto): pick episode + candidate, looping on
-        # empty shortlists, reject-all, or Stage 2 retry exhaustion.
-        while True:
-            episode, transcript, candidate = _pick_episode_and_candidate(feed_arg, interactive=interactive)
-            audio_path = episode["audio_path"]
-            cache_path = _plan_cache_path(audio_path)
-            try:
-                logger.info("Extracting copy (Claude %s) for approved candidate", config.EXTRACT_MODEL)
-                highlights = ai_extract.extract_copy_with_retry(
-                    transcript, candidate["clip_start"], candidate["clip_end"], candidate,
-                )
-            except (ValueError, anthropic.RateLimitError) as exc:
-                logger.warning(
-                    "Stage 2 copy extraction failed for %r (%s); retiring episode "
-                    "and trying another candidate/episode", episode.get("title"), exc,
-                )
-                guid = episode.get("guid")
-                if guid:
-                    posted_history.mark_used(guid=guid, feed=feed_arg, title=episode.get("title", ""))
-                continue
-            _write_plan(cache_path, transcript, highlights)
-            logger.info("Cached transcript + plan: %s", os.path.basename(cache_path))
-            break
-
-    logger.info("Episode: %s", episode.get("title"))
-
-    # Retire the episode immediately after the plan is built (RSS mode only —
-    # 'manual' --url episodes are never excluded from re-selection since
-    # there's no RSS pool to exclude them from) so a YouTube failure later
-    # doesn't leave it available for re-selection next run.
-    guid = episode.get("guid")
-    if guid and feed_arg != "manual":
-        posted_history.mark_used(guid=guid, feed=feed_arg, title=episode.get("title", ""))
-
-    return _render_and_publish(
-        feed_arg, episode, transcript, highlights, render_slides=render_slides,
-    )
-
-
-def _render_and_publish(
-    feed_arg: str,
-    episode: dict,
-    transcript: dict,
-    highlights: dict,
-    render_slides: bool = True,
-    bg_basename: str | None = None,
-) -> dict:
-    """Steps 4-7 (backgrounds -> video -> slides -> manual-post checklist) + summary dict.
-
-    Shared render tail for the classic :func:`run` flow and the --bank flow.
-    ``bg_basename`` namespaces the AI-background image cache and defaults to
-    the audio basename; bank renders pass a per-clip-window suffix so a second
-    clip from the SAME episode never silently reuses the first clip's images.
-    """
-    audio_path = episode["audio_path"]
-    podcast_name = _display_name(feed_arg)
+def render(slug: str, audio_path: str, render_slides: bool = True) -> dict:
+    """Step 2: transcribe the manually-supplied audio, generate images, render
+    video + slides."""
+    plan_path = _plan_cache_path(slug)
+    if not os.path.exists(plan_path):
+        raise FileNotFoundError(
+            f"No cached plan for slug {slug!r} (expected {plan_path}). "
+            "Run `python main.py` first to generate a script."
+        )
     if not os.path.exists(audio_path):
-        raise FileNotFoundError(f"Downloaded audio missing: {audio_path}")
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-    cs, ce = float(highlights["clip_start"]), float(highlights["clip_end"])
-    logger.info("Clip window: %.2f-%.2fs (%.1fs)", cs, ce, ce - cs)
+    with open(plan_path, encoding="utf-8") as f:
+        highlights = json.load(f)["highlights"]
 
-    # 4) Background selection: gpt-image-2 image -> gradient chain.
-    logger.info("[4/6] Backgrounds: select (gpt-image-2 -> gradient)")
-    audio_basename = os.path.splitext(os.path.basename(audio_path))[0]
-    backgrounds = background.select_backgrounds(
-        highlights, basename=bg_basename or audio_basename
-    )
-    bg_kind = "video" if backgrounds and backgrounds[0].lower().endswith(".mp4") else "image"
-    logger.info("Backgrounds: %d %s file(s)", len(backgrounds), bg_kind)
+    logger.info("[2/2] Transcribing voiceover for word timestamps (Groq Whisper): %s", audio_path)
+    transcript = transcribe.transcribe(audio_path)
 
-    # 5) Render the karaoke video.
-    logger.info("[5/6] Video: render karaoke MP4")
+    logger.info("Backgrounds: select (gpt-image-2 -> gradient)")
+    backgrounds = background.select_backgrounds(highlights, basename=slug)
+    logger.info("Backgrounds: %d file(s)", len(backgrounds))
+
+    logger.info("Video: render karaoke MP4")
     video_path = video_gen.build_video(
         audio_path,
         transcript["words"],
         highlights,
-        podcast_name=podcast_name,
+        podcast_name=config.BRAND_NAME,
         background_images=backgrounds,
     )
 
-    # 6) Render the static slide deck (hook + 3 insights + quote + CTA), on the
-    #    same generated wolf images as the video — one branded body of work.
     if render_slides:
-        logger.info("[6/6] Slides: render deck (branded on the clip's wolf images)")
+        logger.info("Slides: render deck (branded on the clip's wolf images)")
         slides = slide_gen.build_slides(highlights, photo_paths=backgrounds)
     else:
-        logger.info("[6/6] Slides: skipped (render_slides=False)")
+        logger.info("Slides: skipped (--no-slides)")
         slides = []
 
-    # 7) Manual-post checklist — no upload APIs, publishing is by hand.
     _log_manual_post(video_path, slides)
-
-    logger.info("Pipeline complete for: %s", episode.get("title"))
-    return {
-        "episode": episode,
-        "highlights": highlights,
-        "clip_start": cs,
-        "clip_end": ce,
-        "video_path": video_path,
-        "slides": slides,
-    }
-
-
-def run_auto() -> dict | None:
-    """Rotation entry point: pick today's feed and process a random unused episode.
-
-    Resolves today's weekday against ``config.ROTATION`` and:
-      * not a posting day            -> log and return None,
-      * feed unreachable             -> log and return None,
-      * all RSS entries already used -> log and return None,
-      * otherwise                    -> run the full pipeline via :func:`run`
-                                        with ``interactive=False`` (no human is
-                                        present for scheduled runs; the top
-                                        surviving candidate is taken
-                                        automatically at each Stage 1 pass).
-
-    Episode/candidate selection, filtering, and Stage 2 retry-exhaustion
-    fallback are all handled inside :func:`run` (via
-    :func:`_pick_episode_and_candidate`) — this function only resolves which
-    feed to use today and translates a fully-exhausted RSS window or a feed
-    error into a clean ``None`` return instead of a crash.
-    """
-    weekday = date.today().weekday()
-    feed_key = config.ROTATION.get(weekday)
-    if feed_key is None:
-        logger.info("Auto mode: no posting day today (%s); nothing to do", _WEEKDAY_NAMES[weekday])
-        return None
-
-    logger.info("Auto mode: %s -> feed '%s' (random episode)", _WEEKDAY_NAMES[weekday], feed_key)
-
-    try:
-        return run(feed_key, interactive=False)
-    except RuntimeError as exc:
-        logger.info("Auto mode: %s; nothing to do", exc)
-        return None
-    except Exception as exc:  # noqa: BLE001 - feed/network problems must not break scheduling
-        logger.warning("Auto mode: feed '%s' unavailable (%s); exiting cleanly", feed_key, exc)
-        return None
-
-
-def scan_feed(feed_arg: str, limit: int) -> None:
-    """Batch Stage-1 scan (``--scan``): bank candidates, render nothing.
-
-    Picks up to ``limit`` unscanned episodes of ``feed_arg`` (prescreen and
-    brand filters still apply via :func:`rss_ingest.pick_random_entry`),
-    transcribes each, runs Stage 1 (find + filter), and stores every surviving
-    candidate in the bank for a later ``--bank`` review. Zero-survivor episodes
-    are banked too (scanned-and-exhausted), so they're never re-scanned. No
-    human interaction, no Stage 2 copywriting, no render.
-    """
-    feed_url = config.PODCAST_FEEDS.get(feed_arg, feed_arg)
-    host_name = config.PODCAST_HOSTS.get(feed_arg)
-    exclude = set(posted_history.load().keys()) | candidate_bank.scanned_guids()
-
-    banked = 0
-    for n in range(1, limit + 1):
-        picked = rss_ingest.pick_random_entry(feed_url, exclude_guids=exclude, host_name=host_name)
-        if picked is None:
-            logger.info("Scan: RSS window for '%s' exhausted after %d episode(s)", feed_arg, n - 1)
-            break
-        feed_obj, entry, meta = picked
-        guid = meta.get("guid", "")
-        logger.info("[scan %d/%d] Episode: %r (guid=%s)", n, limit, meta.get("title"), guid)
-        if guid:
-            exclude.add(guid)
-
-        try:
-            episode = rss_ingest.download_latest(feed_obj, entry)
-            transcript = _load_or_build_transcript(episode["audio_path"])
-            candidates = ai_extract.find_candidates(transcript)
-            survivors = ai_extract.filter_candidates(candidates, transcript)
-        except Exception as exc:  # noqa: BLE001 - one bad episode must not kill the batch
-            logger.warning("Scan: episode %r failed (%s); continuing", meta.get("title"), exc)
-            continue
-
-        basename = os.path.splitext(os.path.basename(episode["audio_path"]))[0]
-        candidate_bank.add_episode(
-            guid=guid,
-            feed=feed_arg,
-            title=episode.get("title", ""),
-            basename=basename,
-            audio_url=episode.get("audio_url"),
-            candidates=survivors,
-        )
-        banked += len(survivors)
-        print(f"  -> banked {len(survivors)} candidate(s) from {episode.get('title')!r}")
-
-    s = candidate_bank.stats()
-    print(
-        f"\nScan complete: {banked} new candidate(s) banked this run. "
-        f"Bank now holds {s['available']} available candidate(s) "
-        f"across {s['episodes']} scanned episode(s)."
-    )
-
-
-def _find_banked_audio(basename: str) -> str | None:
-    """Locate a banked episode's cached audio in tmp/, any audio extension."""
-    for ext in (".mp3", ".m4a", ".aac", ".wav", ".ogg"):
-        path = os.path.join(config.TMP_DIR, basename + ext)
-        if os.path.exists(path):
-            return path
-    return None
-
-
-def _print_bank_candidates(cands: list[dict]) -> None:
-    print("\nBanked candidates (best first):")
-    for i, c in enumerate(cands, 1):
-        flag = "  [!] METAPHOR HOOK — verify the payoff lands in the first sentence" \
-            if ai_extract.is_metaphor_hook(c["hook"]) else ""
-        scanned = (c.get("scanned_at") or "")[:10]
-        print(f"  {i}. [{c['feed']}] {c['episode_title']!r} (episode pick #{c['rank'] + 1}, scanned {scanned})")
-        print(f"     [{c['clip_start']:.1f}-{c['clip_end']:.1f}s] {c['hook']!r}{flag}")
-        print(f"     exposes: {c.get('exposes', '')}")
-        print(f"     reframe: {c.get('reframe', '')}")
-        print(f"     payoff : {c.get('payoff', '')}")
-
-
-def run_from_bank(render_slides: bool = True) -> dict | None:
-    """``--bank``: review banked candidates across ALL feeds, pick one, render it.
-
-    Presents up to ``config.BANK_REVIEW_COUNT`` available candidates (spacing
-    rule applied). Input: a number renders that candidate; ``x<N>`` (e.g.
-    ``x3``) permanently rejects candidate N and re-shows the list; ``0`` exits.
-    A Stage 2 failure marks the candidate rejected and returns to the list.
-    Returns the render summary dict, or ``None`` if nothing was rendered.
-    """
-    while True:
-        cands = candidate_bank.available_candidates()
-        if not cands:
-            print(
-                "Candidate bank has nothing available (empty, exhausted, or all "
-                "hidden by the same-episode spacing rule). Run "
-                "`main.py <feed> --scan` to stock it."
-            )
-            return None
-        shown = cands[: config.BANK_REVIEW_COUNT]
-        _print_bank_candidates(shown)
-        choice = input("Pick a number, x<N> to reject one, or 0 to exit: ").strip().lower()
-
-        if choice in ("", "0"):
-            return None
-        if choice.startswith("x"):
-            try:
-                idx = int(choice[1:]) - 1
-            except ValueError:
-                idx = -1
-            if 0 <= idx < len(shown):
-                c = shown[idx]
-                candidate_bank.mark_candidate(c["guid"], c["index"], "rejected")
-                print(f"Rejected: {c['hook']!r}")
-            else:
-                print("Invalid reject index.")
-            continue
-        try:
-            idx = int(choice) - 1
-        except ValueError:
-            idx = -1
-        if not (0 <= idx < len(shown)):
-            print("Invalid choice.")
-            continue
-        chosen = shown[idx]
-
-        # Materialize audio + transcript (re-download / re-transcribe if tmp/
-        # was cleaned since the scan; both are cache hits in the common case).
-        audio_path = _find_banked_audio(chosen["basename"])
-        if audio_path is None:
-            if not chosen.get("audio_url"):
-                print("Audio file is gone and no audio_url was stored — cannot render this candidate.")
-                continue
-            logger.info("Bank: re-downloading audio for %r", chosen["episode_title"])
-            audio_path = rss_ingest._download_audio(chosen["audio_url"], chosen["basename"])
-        transcript = _load_or_build_transcript(audio_path)
-
-        logger.info(
-            "Extracting copy (Claude %s) for banked candidate [%.1f-%.1fs] of %r",
-            config.EXTRACT_MODEL, chosen["clip_start"], chosen["clip_end"],
-            chosen["episode_title"],
-        )
-        try:
-            highlights = ai_extract.extract_copy_with_retry(
-                transcript, chosen["clip_start"], chosen["clip_end"], chosen,
-            )
-        except (ValueError, anthropic.RateLimitError) as exc:
-            logger.warning(
-                "Stage 2 failed for banked candidate (%s); marking it rejected", exc
-            )
-            candidate_bank.mark_candidate(chosen["guid"], chosen["index"], "rejected")
-            print("Stage 2 copywriting failed for that candidate — it has been rejected. Pick another.")
-            continue
-
-        _write_plan(_plan_cache_path(audio_path), transcript, highlights)
-        candidate_bank.mark_candidate(chosen["guid"], chosen["index"], "used")
-
-        episode = {
-            "title": chosen["episode_title"],
-            "guid": chosen["guid"],
-            "audio_path": audio_path,
-        }
-        # Per-clip-window background namespace: a second clip from the same
-        # episode must generate ITS OWN images, not reuse the first clip's.
-        bg_basename = f"{chosen['basename']}_c{int(float(highlights['clip_start']))}"
-        return _render_and_publish(
-            chosen["feed"], episode, transcript, highlights,
-            render_slides=render_slides, bg_basename=bg_basename,
-        )
+    logger.info("Pipeline complete for: %s", highlights.get("title"))
+    return {"highlights": highlights, "video_path": video_path, "slides": slides}
 
 
 def _print_summary(result: dict) -> None:
-    ep = result["episode"]
-    cs, ce = result["clip_start"], result["clip_end"]
+    h = result["highlights"]
     line = "=" * 64
     print("\n" + line)
     print("PIPELINE SUMMARY")
     print(line)
-    print(f"Episode     : {ep.get('title')}")
-    print(f"Clip window : {cs:.2f}-{ce:.2f}s  ({ce - cs:.1f}s)")
+    print(f"Title       : {h.get('title')}")
+    print(f"Topic       : {h.get('topic_cluster')}")
     print(f"Video MP4   : {result['video_path']}")
     print(f"Slides ({len(result['slides'])})  :")
     for p in result["slides"]:
         print(f"              - {p}")
-
     print(line)
     print("MANUAL POST (all platforms, by hand):")
     print(f"  Short/Reel video : {result['video_path']}")
@@ -605,120 +186,28 @@ def _print_summary(result: dict) -> None:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Podcast automation pipeline (ingest -> render)")
+    parser = argparse.ArgumentParser(description="Synthetic-script video pipeline")
     parser.add_argument(
-        "feed",
-        nargs="?",
-        default=config.DEFAULT_FEED,
-        help=(
-            "Feed name (one of: " + ", ".join(config.PODCAST_FEEDS) + ") "
-            "or a raw RSS URL. Defaults to " + config.DEFAULT_FEED + ". Ignored with --auto."
-        ),
-    )
-    parser.add_argument(
-        "--auto",
-        action="store_true",
-        help=(
-            "Rotation mode: pick today's feed from config.ROTATION by weekday and "
-            "process its latest episode. Exits 0 cleanly if today isn't a posting "
-            "day, the feed is unreachable, or the latest episode was already posted."
-        ),
-    )
-    parser.add_argument(
-        "--url",
-        help=(
-            "Direct episode-audio URL. Bypasses RSS ingestion entirely: downloads "
-            "the audio (yt-dlp) and runs the pipeline from transcribe onward, "
-            "tagged as the 'manual' feed. Mutually exclusive with --auto and the "
-            "positional feed."
-        ),
-    )
-    parser.add_argument(
-        "--title",
-        help=(
-            "Episode title to use with --url. When omitted, the title is derived "
-            "from the URL's filename. Only meaningful alongside --url."
-        ),
-    )
-    parser.add_argument(
-        "--scan",
-        action="store_true",
-        help=(
-            "Batch Stage-1 scan: transcribe up to --limit unscanned episodes of "
-            "FEED and bank their surviving clip candidates for a later --bank "
-            "review. No copywriting, no render."
-        ),
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=config.SCAN_EPISODES_PER_RUN,
-        help=(
-            "Episodes to scan per --scan run "
-            f"(default: {config.SCAN_EPISODES_PER_RUN}). Only valid with --scan."
-        ),
-    )
-    parser.add_argument(
-        "--bank",
-        action="store_true",
-        help=(
-            "Review banked candidates across ALL feeds, pick one, and render it "
-            "(Stage 2 + video + slides). Stock the bank with --scan first. "
-            "The positional feed argument is ignored."
-        ),
+        "--render",
+        nargs=2,
+        metavar=("SLUG", "AUDIO_PATH"),
+        help="Render step 2: SLUG from a prior `main.py` run, AUDIO_PATH to the "
+        "ElevenLabs voiceover you downloaded for it.",
     )
     parser.add_argument(
         "--no-slides",
         action="store_true",
-        help="Skip the slide-carousel render; produce the karaoke video only. "
-        "Not supported with --auto.",
+        help="With --render, skip the slide-carousel render; produce the karaoke video only.",
     )
     args = parser.parse_args()
 
-    if args.no_slides and args.auto:
-        parser.error("--no-slides cannot be combined with --auto")
-
-    if args.url and args.auto:
-        parser.error("--url cannot be combined with --auto")
-    if args.title and not args.url:
-        parser.error("--title is only valid together with --url")
-    if args.scan and args.bank:
-        parser.error("--scan and --bank are separate steps; run them one at a time")
-    if (args.scan or args.bank) and (args.auto or args.url):
-        parser.error("--scan/--bank cannot be combined with --auto or --url")
-
     try:
-        if args.scan:
-            scan_feed(args.feed, args.limit)
-            sys.exit(0)
-        elif args.bank:
-            result = run_from_bank(render_slides=not args.no_slides)
-            if result is None:
-                # Nothing rendered (empty bank or user exited the review).
-                sys.exit(0)
-        elif args.auto:
-            result = run_auto()
-            if result is None:
-                # Nothing to do (no posting day / already posted / feed down).
-                sys.exit(0)
-        elif args.url:
-            # Direct-URL mode: skip rss_ingest, download the audio, then run the
-            # normal pipeline from transcribe onward as the "manual" feed.
-            logger.info("Direct URL mode: %s", args.url)
-            episode = rss_ingest.fetch_from_url(args.url, title=args.title)
-            result = run(
-                "manual", episode=episode,
-                render_slides=not args.no_slides, interactive=True,
-            )
+        if args.render:
+            slug, audio_path = args.render
+            result = render(slug, audio_path, render_slides=not args.no_slides)
+            _print_summary(result)
         else:
-            result = run(
-                args.feed, render_slides=not args.no_slides, interactive=True,
-            )
+            generate()
     except Exception:
-        # Log the full traceback (the preceding "[n/7]" line shows which step
-        # was running) and exit non-zero so genuine pipeline failures never pass
-        # silently. (Feed/no-episode no-ops are handled inside run_auto and exit 0.)
         logger.exception("Pipeline FAILED")
         sys.exit(1)
-
-    _print_summary(result)
