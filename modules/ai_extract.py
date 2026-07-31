@@ -1043,7 +1043,13 @@ def find_candidates(transcript: dict) -> list[dict]:
         if not isinstance(c, dict) or not all(k in c for k in required):
             logger.warning("Dropping malformed candidate (missing keys): %r", c)
             continue
-        if not isinstance(c["clip_start"], (int, float)) or not isinstance(c["clip_end"], (int, float)):
+        # The model occasionally emits timestamps as strings ('780.15', even
+        # ' 780.15') — coerce instead of dropping. A real 2026-07-31 scan lost
+        # 3 strong candidates to a strict isinstance check here.
+        try:
+            c["clip_start"] = float(c["clip_start"])
+            c["clip_end"] = float(c["clip_end"])
+        except (TypeError, ValueError):
             logger.warning("Dropping malformed candidate (non-numeric window): %r", c)
             continue
         valid.append(c)
