@@ -387,8 +387,8 @@ def _map_photos_to_slides(photos: list[str], n_insights: int) -> tuple[list[str 
 def build_slides(highlights: dict, force: bool = False, photo_paths: list[str] | None = None) -> list[str]:
     """Render the editorial deck on full-bleed image backgrounds.
 
-    Order: COVER (hook), INSIGHT 01-03 (insights), QUOTE (best_quote), FOLLOW (CTA).
-    Requires keys: hook, insights (>=1, uses up to 3), best_quote.
+    Order: COVER (hook), INSIGHT 01-03 (insights), QUOTE (key_line), FOLLOW (CTA).
+    Requires keys: hook, insights (>=1, uses up to 3), key_line.
 
     ``photo_paths``: the clip's generated wolf background images, passed
     straight from the video render — video and carousel are one body of work
@@ -401,9 +401,9 @@ def build_slides(highlights: dict, force: bool = False, photo_paths: list[str] |
 
     hook = (highlights.get("hook") or "").strip()
     insights = [str(i).strip() for i in (highlights.get("insights") or []) if str(i).strip()]
-    quote = (highlights.get("best_quote") or "").strip()
+    quote = (highlights.get("key_line") or "").strip()
     if not hook or not insights or not quote:
-        raise ValueError("highlights needs hook, insights, and best_quote to build the deck")
+        raise ValueError("highlights needs hook, insights, and key_line to build the deck")
 
     insights = insights[:3]
     bgs, follow_bg = _map_photos_to_slides(photo_paths or [], len(insights))
@@ -441,7 +441,7 @@ SAMPLE_HIGHLIGHTS = {
         "The people who will thrive most over the next decade aren't those who adapt to modern culture — they're the ones who consciously choose to do the opposite.",
         "Rare traits like deep focus, emotional regulation, and independent thinking are about to become the most valuable assets a person can have.",
     ],
-    "best_quote": "In a world that's addicted to noise, being peaceful becomes your superpower.",
+    "key_line": "In a world that's addicted to noise, being peaceful becomes your superpower.",
     "title": "Your Nervous System Is Rejecting Modern Life — Here's How to Fix It",
     "clip_start": 2355,
     "clip_end": 2415,
