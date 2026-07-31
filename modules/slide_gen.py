@@ -40,7 +40,6 @@ BODY = (240, 240, 245)     # #F0F0F5 near-white
 MUTED = (110, 110, 120)    # #6E6E78 footer wordmark
 MUTED_YELLOW = (176, 142, 53)  # dimmed accent for the quote attribution
 DOT_OFF = (60, 60, 70)     # #3C3C46 inactive progress dots
-GHOST = (32, 32, 42)       # #20202A barely-there serif numbers (solid-bg fallback only)
 
 # --- Photo background treatment (full-bleed Pexels photo behind every slide) ---
 # Readability is non-negotiable: a flat black overlay sets a dark floor, and a
@@ -50,8 +49,6 @@ OVERLAY_BASE_ALPHA = 0.60   # flat 60% black over the whole photo
 BAND_PEAK_ALPHA = 0.75      # ~75% black in the region where the text sits
 INSIGHT_BAND_PEAK_ALPHA = 0.82  # insight photos are busiest -> deepen their text band
 BAND_FEATHER = 220          # px ramp from base->peak above/below the text band
-GHOST_WHITE = (255, 255, 255)       # ghost number now reads as a watermark...
-GHOST_ALPHA = int(0.12 * 255)       # ...at ~12% opacity over the photo
 TEXT_STROKE_W = 2                   # black stroke/shadow behind body text
 TEXT_STROKE = (0, 0, 0)
 
@@ -74,7 +71,6 @@ EYEBROW_SIZE = 30
 FOOTER_SIZE = 24
 ATTR_SIZE = 36             # quote attribution ("— Name")
 ATTR_GAP = 36              # gap between the quote and its attribution
-GHOST_SIZE = 520
 EYEBROW_TRACKING = 6       # uniform letter spacing for every eyebrow label
 FOOTER_TRACKING = 4
 TICK_W, TICK_H = 70, 8     # the little accent bar above each eyebrow
@@ -86,11 +82,6 @@ _SANS_CANDIDATES = [
     os.path.join(_FONTS_DIR, "DejaVuSans-Bold.ttf"),
     os.path.join(_WIN_FONTS, "arialbd.ttf"),
     os.path.join(_WIN_FONTS, "segoeuib.ttf"),
-]
-_SERIF_CANDIDATES = [
-    os.path.join(_FONTS_DIR, "DejaVuSerif-Bold.ttf"),
-    os.path.join(_WIN_FONTS, "georgiab.ttf"),
-    os.path.join(_WIN_FONTS, "timesbd.ttf"),
 ]
 _FONT_CACHE: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
 
@@ -110,10 +101,6 @@ def _font(candidates: list[str], size: int) -> ImageFont.FreeTypeFont:
 
 def _sans(size: int) -> ImageFont.FreeTypeFont:
     return _font(_SANS_CANDIDATES, size)
-
-
-def _serif(size: int) -> ImageFont.FreeTypeFont:
-    return _font(_SERIF_CANDIDATES, size)
 
 
 def _line_height(font: ImageFont.FreeTypeFont) -> int:
@@ -228,14 +215,6 @@ def _photo_canvas(bg_path: str | None, band_top: int, band_bottom: int,
     return img, ImageDraw.Draw(img)
 
 
-def _draw_ghost_number_overlay(img: Image.Image, n: int) -> None:
-    """Composite the giant serif number as a faint white watermark (mutates img)."""
-    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(overlay).text((50, -120), f"{n:02d}", font=_serif(GHOST_SIZE),
-                                 fill=(*GHOST_WHITE, GHOST_ALPHA), anchor="la")
-    img.paste(Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB"), (0, 0))
-
-
 def _eyebrow_block_h() -> int:
     """Height of the tick + eyebrow label block (from tick top to text bottom)."""
     ascent, descent = _sans(EYEBROW_SIZE).getmetrics()
@@ -293,21 +272,24 @@ def _render_cover(path: str, hook: str, idx: int, bg_path: str | None) -> None:
                 "photo" if bg_path else "solid")
 
 
-def _render_insight(path: str, number: int, text: str, idx: int, bg_path: str | None) -> None:
-    md = _measure_draw()
-    ghost_bottom = md.textbbox((50, -120), f"{number:02d}", font=_serif(GHOST_SIZE), anchor="la")[3]
-    eyebrow_top = int(ghost_bottom) + 30
-    body_top = eyebrow_top + _eyebrow_block_h() + 36
-    font, lines, lh = _fit_body(md, text, BODY_W, BODY_BOTTOM - body_top)
-    body_bottom = body_top + lh * len(lines)
+def _render_insight(path: str, text: str, idx: int, bg_path: str | None) -> None:
+    """Insight slide: eyebrow + body, vertically centered like the cover.
 
-    img, draw = _photo_canvas(bg_path, eyebrow_top, body_bottom, peak_alpha=INSIGHT_BAND_PEAK_ALPHA)
-    _draw_ghost_number_overlay(img, number)  # faint white watermark under the text
-    _draw_eyebrow(draw, "INSIGHT", eyebrow_top)
-    _draw_body(draw, lines, font, lh, body_top)
+    The giant ghosted serif numbers (01/02/03) were removed 2026-07-31 by user
+    request — the slide count already reads from the footer progress dots, and
+    the numbers competed with the wolf artwork behind them.
+    """
+    eb_h = _eyebrow_block_h()
+    font, lines, lh = _fit_body(_measure_draw(), text, BODY_W, SAFE_H - eb_h - EYEBROW_GAP)
+    block_h = eb_h + EYEBROW_GAP + lh * len(lines)
+    top = SAFE_TOP + (SAFE_H - block_h) // 2
+
+    img, draw = _photo_canvas(bg_path, top, top + block_h, peak_alpha=INSIGHT_BAND_PEAK_ALPHA)
+    _draw_eyebrow(draw, "INSIGHT", top)
+    _draw_body(draw, lines, font, lh, top + eb_h + EYEBROW_GAP)
     _draw_footer(draw, idx)
     img.save(path)
-    logger.info("Rendered slide: %s (insight %02d, %s)", os.path.basename(path), number,
+    logger.info("Rendered slide: %s (insight, %s)", os.path.basename(path),
                 "photo" if bg_path else "solid")
 
 
@@ -438,9 +420,9 @@ def build_slides(highlights: dict, force: bool = False, photo_paths: list[str] |
         return p
 
     _render_cover(_path(0), hook, idx=0, bg_path=bgs[0])
-    for n, insight in enumerate(insights, start=1):
+    for insight in insights:
         i = len(paths)
-        _render_insight(_path(i), n, insight, idx=i, bg_path=bgs[i])
+        _render_insight(_path(i), insight, idx=i, bg_path=bgs[i])
     qi = len(paths)
     _render_quote(_path(qi), quote, _attribution(highlights), idx=qi, bg_path=bgs[qi])
 

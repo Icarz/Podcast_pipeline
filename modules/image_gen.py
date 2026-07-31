@@ -77,9 +77,15 @@ _DEFAULT_MOOD = BEAT_MOODS["payoff"]
 
 DEFAULT_OUTFIT = "a mustard-yellow hoodie, dark jeans and clean white sneakers"
 
+# Text ON a contextual prop (a list, note, sign named by the scene's action)
+# is allowed since 2026-07-31 — user decision; the scene spec supplies the
+# exact words. Everything else stays banned.
 NEGATIVE_BLOCK = (
-    "No legible text, words, letters, numbers, or signage anywhere in the "
-    "image. No skulls or death imagery, no cigarettes, alcohol, drugs, or "
+    "Any readable text appears ONLY on the prop described in the scene, with "
+    "exactly the wording given there, spelled correctly, small and naturally "
+    "part of the object — never floating typography, captions, titles, "
+    "watermarks, or decorative lettering, and no other text anywhere else in "
+    "the image. No skulls or death imagery, no cigarettes, alcohol, drugs, or "
     "vices, no slumped or defeated posture, no violence or gore. No humans, "
     "no other animals, no second wolf — the wolf is the only figure (a busy "
     "street or market as a soft anonymous backdrop is fine, with no other "
