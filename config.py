@@ -202,10 +202,13 @@ FEED_NAME_MAX_LEN = 40
 EPISODE_TITLE_MAX_LEN = 60
 
 # --- AI extraction (Claude) ---
-# Requested claude-sonnet-4-20250514, but it 404s on this account (retired).
-# Using its drop-in replacement, the current Sonnet.
-EXTRACT_MODEL = "claude-sonnet-4-6"
-EXTRACT_MAX_TOKENS = 3000  # raised from 2000: 6 structured image_scenes objects need headroom
+# claude-sonnet-5 (swapped from claude-sonnet-4-6 on 2026-07-31): the current
+# Sonnet — near-Opus quality on the judgment-heavy extraction/copywriting work,
+# same $3/$15 price class ($2/$10 intro through 2026-08-31). Drop-in for this
+# pipeline (no temperature/thinking/prefill used anywhere). NOTE: its tokenizer
+# yields ~30% more tokens for the same text, hence the max-tokens bump below.
+EXTRACT_MODEL = "claude-sonnet-5"
+EXTRACT_MAX_TOKENS = 4000  # headroom for the 6 image_scenes objects under the sonnet-5 tokenizer
 # Target clip window the model should aim for, in seconds.
 # Capped at 58s so the finished Short stays UNDER 60s — YouTube blocks the
 # Pixabay music bed on Shorts that are 60s or longer, so we keep a 2s safety

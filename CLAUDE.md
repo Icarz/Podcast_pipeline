@@ -259,7 +259,7 @@ Copy `.env.example` → `.env`. Exactly three keys (everything else was purged 2
 
 Modules call `load_dotenv()` themselves so they work standalone.
 
-Model IDs: Claude `claude-sonnet-4-6` (`config.EXTRACT_MODEL`), Groq `whisper-large-v3` (`transcribe.MODEL`), OpenAI `gpt-image-2` (`config.OPENAI_IMAGE_MODEL`, `1024x1536` @ `medium` quality — `image_gen.py`). The original `claude-sonnet-4-20250514` 404s on this account (retired) — keep the replacement.
+Model IDs: Claude `claude-sonnet-5` (`config.EXTRACT_MODEL` — swapped from `claude-sonnet-4-6` on 2026-07-31, verified against the full Stage-2 schema + gates on first attempt; `EXTRACT_MAX_TOKENS` raised to 4000 for its ~30%-heavier tokenizer), Claude `claude-haiku-4-5` (prescreen + content gate — cheapest current model, right for binary YES/NO calls), Groq `whisper-large-v3` (`transcribe.MODEL`), OpenAI `gpt-image-2` (`config.OPENAI_IMAGE_MODEL`, `1024x1536` @ `medium` quality — `image_gen.py`). The old `claude-sonnet-4-20250514` 404s on this account (retired) — never regress past the current Sonnet.
 
 ## Gotchas / current state
 
