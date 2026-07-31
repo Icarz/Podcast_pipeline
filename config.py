@@ -17,190 +17,6 @@ SLIDE_DIR = os.path.join(OUTPUT_DIR, "slides")
 
 LOG_FILE = os.path.join(LOGS_DIR, "pipeline.log")
 
-# --- Podcast RSS feeds (verified live June 2026; select by key) ---
-# Each value is the show's official RSS URL — verify against the source in the
-# trailing comment. The first five are the weekly ROTATION (see below).
-# ROTATION PHILOSOPHY: prefer solo-speaker / monologue-format shows. Interview
-# podcasts produce two-voice clips that perform poorly as Shorts.
-PODCAST_FEEDS = {
-# The Mel Robbins Podcast (Simplecast)            https://feeds.simplecast.com/UCwaTX1J
-    # Solo motivational; consistently single-speaker. Brand: identity/resilience.
-    "mel_robbins":    "https://feeds.simplecast.com/UCwaTX1J",
-    # The Jordan B. Peterson Podcast (Megaphone)     https://feeds.megaphone.fm/BVDWV6444647327
-    # NOTE: canonical PUBLIC feed (per Apple + jordanbpeterson.com + podnews).
-    # Recent episodes are Daily Wire+ members-only; public RSS lags (newest
-    # public ep was Nov 2025 as of June 2026). --auto dedup handles re-pulls.
-    "jordan_peterson": "https://feeds.megaphone.fm/BVDWV6444647327",
-    # The Daily Stoic — Ryan Holiday (Art19)         https://rss.art19.com/the-daily-stoic
-    # Pure solo monologue (5–10 min commentary). Highest single-speaker signal.
-    "daily_stoic":    "https://rss.art19.com/the-daily-stoic",
-    # The Mindset Mentor — Rob Dial (Simplecast)     https://feeds.simplecast.com/rpKQEwel
-    # Solo monologue. Brand: neuroscience/behavior/identity.
-    "mindset_mentor": "https://feeds.simplecast.com/rpKQEwel",
-    # Progress Mode with Brendon Burchard (Megaphone)  https://feeds.megaphone.fm/GRWD7465844787
-    # Solo monologue. Brand: high-performance/motivation/habits.
-    "brendon_burchard": "https://feeds.megaphone.fm/GRWD7465844787",
-    # --- manual-run only (not in rotation) ---
-    # On Purpose — Jay Shetty (interview format; 2-speaker risk like Modern Wisdom)
-    "jay_shetty":     "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/32f1779e-bc01-4d36-89e6-afcb01070c82/e0c8382f-48d4-42bb-89d5-afcb01075cb4/podcast.rss",
-    # Modern Wisdom — Chris Williamson (interview format; 2-speaker risk)
-    "modern_wisdom":  "https://feeds.megaphone.fm/modernwisdom",
-    # Jocko Podcast — Jocko Willink (RedCircle)
-    "jocko_podcast":  "https://feeds.redcircle.com/64a89f88-a245-4098-8d8d-496325ec4f74",
-    # SOLVED with Mark Manson (monthly)
-    "mark_manson":    "https://feeds.megaphone.fm/ISML9402684841",
-}
-
-# Named host per feed, used by rss_ingest's prescreen to reject guest/interview
-# episodes: if a guest is credited (title pattern like "| Guest Name", "with
-# Guest Name", "ft. Guest Name") the episode is skipped entirely rather than
-# risk extracting a clip of the GUEST's words attributed to the show's host.
-# HARD RULE (user directive, Jul 2026): if the named host isn't the one
-# speaking, don't take it — a solo/monologue episode is required.
-PODCAST_HOSTS = {
-    "mel_robbins":     "Mel Robbins",
-    "jordan_peterson": "Jordan Peterson",
-    "daily_stoic":     "Ryan Holiday",
-    "mindset_mentor":  "Rob Dial",
-    "brendon_burchard": "Brendon Burchard",
-    "jay_shetty":      "Jay Shetty",
-    "modern_wisdom":   "Chris Williamson",
-    "jocko_podcast":   "Jocko Willink",
-    "mark_manson":     "Mark Manson",
-}
-
-# Default feed used when none is specified.
-DEFAULT_FEED = "mindset_mentor"
-
-# --- Weekly multi-podcast rotation ---
-# main.py --auto picks today's feed from here by weekday. Python's
-# date.weekday() is Mon=0, Tue=1, ..., Sun=6. Any weekday NOT listed is a
-# non-posting day: --auto logs "no posting day today" and exits 0.
-ROTATION = {
-    0: "brendon_burchard", # Monday
-    1: "mel_robbins",      # Tuesday
-    2: "jordan_peterson",  # Wednesday
-    4: "daily_stoic",      # Friday
-    5: "mindset_mentor",   # Saturday
-}
-
-# --- Episode content pre-filter (used by rss_ingest.pick_random_entry) ---
-# Episodes whose TITLE matches any EPISODE_REJECT_KEYWORDS word are dropped
-# before random selection — they're clearly off-brand regardless of what's
-# buried inside. Case-insensitive substring match on the episode title only
-# (descriptions are too verbose and noisy for hard rejection).
-EPISODE_REJECT_KEYWORDS = [
-    # Economics / finance / markets
-    "economy", "economic", "econom", "finance", "financial", "investing",
-    "investment", "stock market", "crypto", "bitcoin", "nft", "hedge fund",
-    "venture capital", "private equity", "real estate", "tax", "inflation",
-    "recession", "debt", "money management", "wealth building",
-    # Politics / ideology / debate
-    "politics", "political", "election", "government", "policy", "congress",
-    "democrat", "republican", "president", "prime minister", "war", "military",
-    "geopolit", "climate change", "immigration",
-    "anarchy", "anarchism", "libertarian", "socialism", "communism", "capitalism",
-    "debate", "vs.", " vs ", "ideology", "manifesto",
-    # Sports / entertainment / celebrity
-    "nfl", "nba", "nhl", "mlb", "ufc", "mma", "boxing", "football", "basketball",
-    "baseball", "soccer", "tennis", "golf", "athlete", "championship",
-    "celebrity", "actor", "actress", "movie", "film", "hollywood", "music industry",
-    # Time-specific / news
-    "covid", "pandemic", "coronavirus", "lockdown",
-    # Biohacking / substance-based performance (lifestyle tactics, not identity)
-    "biohacking", "biohack", "nootropic", "supplement stack", "cold plunge",
-    "cold shower", "ice bath", "intermittent fasting", "caffeine protocol",
-    "pre-workout", "energy drink", "sleep hack",
-]
-
-# Episodes whose title OR description contains any of these words are scored
-# higher and preferred during random selection. Purely additive — a zero-score
-# episode is still eligible, just less likely to be picked than a scored one.
-# Each match adds 1 point; random.choices weights by (score + 1) so every
-# episode has a non-zero probability.
-# Description-level reject phrases — checked against the first 500 chars of the
-# episode description (summary). More specific than EPISODE_REJECT_KEYWORDS
-# (which targets titles) to avoid false positives on verbose descriptions.
-# Use multi-word phrases where possible; single words only when unambiguous.
-EPISODE_REJECT_DESC_PHRASES = [
-    # Science/institutional scandal
-    "replication crisis", "replication failure", "research fraud",
-    "scientific misconduct", "peer review scandal", "statistically invalid",
-    "retracted stud", "false positive result",
-    # Finance / markets (description-level)
-    "stock market", "investment portfolio", "asset allocation",
-    "interest rate", "hedge fund", "venture capital",
-    "cryptocurrency", "blockchain technology", "nft",
-    # Politics / elections
-    "election result", "political campaign", "voting rights",
-    "foreign policy", "immigration policy", "border control",
-    "government spending", "federal budget", "tax policy",
-    # Crime / legal
-    "criminal trial", "convicted", "lawsuit", "legal battle",
-    "war crime", "genocide", "terrorism",
-    # Entertainment / sports scores
-    "box office", "movie premiere", "film release", "album drop",
-    "super bowl", "world cup", "grand slam", "championship game",
-    "box office gross",
-]
-
-EPISODE_BRAND_KEYWORDS = [
-    # Core universe
-    "psychology", "mindset", "behavior", "behaviour", "mental", "brain",
-    "neuroscience", "neurology", "cognitive", "consciousness",
-    # Identity / self
-    "identity", "self-", "confidence", "purpose", "meaning", "fulfillment",
-    "self-worth", "self-image", "ego", "authenticity",
-    # Performance / habit
-    "habit", "discipline", "focus", "productivity", "performance", "routine",
-    "willpower", "motivation", "drive", "ambition", "goal",
-    # Resilience / growth
-    "resilience", "adversity", "overcome", "struggle", "growth", "grit",
-    "stoic", "stoicism", "philosophy", "wisdom", "virtue",
-    # Emotional / relational
-    "emotion", "emotional", "anxiety", "fear", "stress", "relationship",
-    "loneliness", "connection", "trauma", "healing", "therapy",
-    # Thinking / decision
-    "decision", "thinking", "awareness", "perception", "belief", "bias",
-    "perspective", "reframe", "clarity",
-]
-
-# Episode pre-screen (Claude Haiku call before download).
-# A binary YES/NO call using the cheapest model — checks whether an episode
-# likely contains on-brand content BEFORE committing to a 45–80 MB download
-# and full Groq transcription. Tries up to PRESCREEN_MAX_ATTEMPTS random picks
-# from the on-brand pool; falls back to the highest brand-scored episode if all
-# fail. Set PRESCREEN_ENABLED=False to bypass (e.g. in tests or offline runs).
-PRESCREEN_ENABLED = True
-PRESCREEN_MODEL = "claude-haiku-4-5-20251001"
-PRESCREEN_MAX_ATTEMPTS = 3
-
-# Content gate: after extraction, send the actual clip transcript back to Haiku
-# to verify the segment delivers a payoff and isn't rambling/small talk.
-# Raises ValueError on fail so the retry wrapper re-extracts a different segment.
-CONTENT_GATE_ENABLED = True
-CONTENT_GATE_MODEL = "claude-haiku-4-5-20251001"
-
-# Posted-history log: which episodes have already been uploaded (keyed by RSS
-# GUID) so --auto never re-posts the same episode. Written ONLY after a
-# successful YouTube upload. See modules/posted_history.py.
-POSTED_HISTORY_PATH = os.path.join(TMP_DIR, "posted_history.json")
-
-# --- HTTP ---
-# Browser-like headers so feeds/CDNs that block default clients still respond.
-BROWSER_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/rss+xml, application/xml, text/xml, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-}
-
-# --- Filename sanitization ---
-FEED_NAME_MAX_LEN = 40
-EPISODE_TITLE_MAX_LEN = 60
-
 # --- AI extraction (Claude) ---
 # claude-sonnet-5 (swapped from claude-sonnet-4-6 on 2026-07-31): the current
 # Sonnet — near-Opus quality on the judgment-heavy extraction/copywriting work,
@@ -209,16 +25,14 @@ EPISODE_TITLE_MAX_LEN = 60
 # yields ~30% more tokens for the same text, hence the max-tokens bump below.
 EXTRACT_MODEL = "claude-sonnet-5"
 EXTRACT_MAX_TOKENS = 4000  # headroom for the 6 image_scenes objects under the sonnet-5 tokenizer
-# Target clip window the model should aim for, in seconds.
-# Capped at 58s so the finished Short stays UNDER 60s — YouTube blocks the
-# Pixabay music bed on Shorts that are 60s or longer, so we keep a 2s safety
-# margin under that threshold.
+# Target spoken duration for modules/script_gen.py's scripts, in seconds.
+# There is no transcript to snap to anymore -- the REAL, final duration is
+# whatever the ElevenLabs voiceover comes out to; video_gen.build_video
+# already clamps clip_end to the actual audio duration regardless of what's
+# cached here (proven by the 2026-07-31 manual test: a 39.7s script rendered
+# clean with no floor enforcement needed). Capped at 58s so the finished
+# Short stays UNDER 60s -- YouTube blocks the music bed on Shorts >= 60s.
 CLIP_WINDOW_MIN_SECONDS = 45
-CLIP_WINDOW_MAX_SECONDS = 58
-# Hard upper bound enforced by ai_extract._validate(). It must also sit at/below
-# 58s (not just the soft target) — validation checks against THIS value, and
-# sentence-boundary snapping can push the window a touch past the target, which
-# the 2s margin absorbs.
 CLIP_WINDOW_MAX_HARD_SECONDS = 58
 
 # --- Slide dimensions (pixels) ---
@@ -252,19 +66,6 @@ ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 BG_BLUR_RADIUS = 25
 BG_DARKEN = 0.35                     # brightness multiplier (0=black, 1=original)
 
-# --- Candidate shortlist (Stage 1 of the two-stage extraction) ---
-CANDIDATE_COUNT = 5                  # max ranked clip candidates find_candidates() surfaces
-
-# --- Candidate bank (cross-episode clip backlog; modules/candidate_bank.py) ---
-# `main.py --scan` batch-runs Stage 1 over unscanned episodes and banks the
-# surviving candidates; `main.py --bank` picks the best candidate ACROSS all
-# scanned episodes/feeds instead of gambling on one random episode. Candidates
-# are consumed individually, so one episode can yield several Shorts over time.
-CANDIDATE_BANK_PATH = os.path.join(TMP_DIR, "candidate_bank.json")
-SCAN_EPISODES_PER_RUN = 3        # episodes scanned per `--scan` invocation (--limit overrides)
-EPISODE_CLIP_SPACING_DAYS = 14   # min days between two rendered clips of the SAME episode
-BANK_REVIEW_COUNT = 10           # max banked candidates shown per --bank review session
-
 # --- AI-generated themed backgrounds (OpenAI gpt-image-2 — primary background source) ---
 OPENAI_IMAGE_MODEL = "gpt-image-2"
 OPENAI_IMAGE_SIZE = "1024x1536"      # portrait, closest match to the 9:16 video frame
@@ -282,6 +83,26 @@ IMAGE_PROMPT_COUNT = 6
 # the model emits to exactly this sequence; image_gen maps each beat to a mood
 # line in the composed prompt.
 IMAGE_SCENE_BEATS = ["problem", "problem", "stakes", "reframe", "payoff", "payoff"]
+
+# --- Script topic clusters (modules/script_gen.py) ---
+# Fixed taxonomy so modules/script_history.py's dedup ledger stays consistent
+# across runs. The model still free-picks a SPECIFIC topic each run; this only
+# tags which bucket it falls in. First 3 are the proven top performers (see
+# CLAUDE.md's content-performance data) and should be favored by the prompt;
+# the other 2 cover the rest of the content universe.
+TOPIC_CLUSTERS = [
+    "fear_anxiety_rumination",
+    "individuality_vs_conformity",
+    "money_as_freedom",
+    "neurology_focus_motivation",
+    "identity_resilience_meaning",
+]
+
+# Dedup ledger: every topic modules/script_gen.py has generated, so each new
+# run can avoid repeating a recent topic_cluster or hook. See
+# modules/script_history.py.
+SCRIPT_HISTORY_PATH = os.path.join(TMP_DIR, "script_history.json")
+
 IMAGE_ASPECT_RATIO = "9:16"          # vertical, matches the video frame
 BG_IMAGE_PREFIX = "bg_"             # tmp/<basename>_bg_<n>.png
 
