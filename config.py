@@ -37,6 +37,9 @@ PODCAST_FEEDS = {
     # The Mindset Mentor — Rob Dial (Simplecast)     https://feeds.simplecast.com/rpKQEwel
     # Solo monologue. Brand: neuroscience/behavior/identity.
     "mindset_mentor": "https://feeds.simplecast.com/rpKQEwel",
+    # Progress Mode with Brendon Burchard (Megaphone)  https://feeds.megaphone.fm/GRWD7465844787
+    # Solo monologue. Brand: high-performance/motivation/habits.
+    "brendon_burchard": "https://feeds.megaphone.fm/GRWD7465844787",
     # --- manual-run only (not in rotation) ---
     # On Purpose — Jay Shetty (interview format; 2-speaker risk like Modern Wisdom)
     "jay_shetty":     "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/32f1779e-bc01-4d36-89e6-afcb01070c82/e0c8382f-48d4-42bb-89d5-afcb01075cb4/podcast.rss",
@@ -59,6 +62,7 @@ PODCAST_HOSTS = {
     "jordan_peterson": "Jordan Peterson",
     "daily_stoic":     "Ryan Holiday",
     "mindset_mentor":  "Rob Dial",
+    "brendon_burchard": "Brendon Burchard",
     "jay_shetty":      "Jay Shetty",
     "modern_wisdom":   "Chris Williamson",
     "jocko_podcast":   "Jocko Willink",
