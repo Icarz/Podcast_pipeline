@@ -28,13 +28,21 @@ from moviepy import (
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 import config
-from modules.ai_extract import _ends_sentence
 
 logger = logging.getLogger(__name__)
 
 _BOLD_FONTS = ["arialbd.ttf", "segoeuib.ttf", "calibrib.ttf"]
 _FONTS_DIR = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
 _IMAGE_EXTS = ("*.jpg", "*.jpeg", "*.png", "*.webp")
+
+_SENTENCE_END = (".", "!", "?")
+
+
+def _ends_sentence(word: str) -> bool:
+    """True if a word token ends a sentence (terminal punctuation, ignoring
+    any trailing quote/bracket characters). Was imported from ai_extract.py
+    (deleted); it's a pure text utility with a single caller here now."""
+    return word.rstrip("\"')]}").endswith(_SENTENCE_END)
 
 
 def _bold_font_path() -> str:
@@ -615,50 +623,27 @@ if __name__ == "__main__":
 
     import imageio_ffmpeg
 
-    from modules import ai_extract, background, transcribe
+    from modules import background
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     mp3s = sorted(glob.glob(os.path.join(config.TMP_DIR, "*.mp3")), key=os.path.getmtime, reverse=True)
     if not mp3s:
-        raise SystemExit(f"No MP3 found in {config.TMP_DIR} - run rss_ingest first.")
+        raise SystemExit(f"No MP3 found in {config.TMP_DIR} - run main.py first to generate a script + voiceover.")
     audio_path = mp3s[0]
 
-    # Cache the transcript + clip plan next to the MP3 so re-runs don't re-hit
-    # the Groq/Claude APIs (the "cached episode" workflow).
     cache_path = os.path.splitext(audio_path)[0] + ".plan.json"
-    if os.path.exists(cache_path):
-        print(f"Loading cached transcript + plan: {os.path.basename(cache_path)}", flush=True)
-        with open(cache_path, encoding="utf-8") as f:
-            cached = json.load(f)
-        transcript, highlights = cached["transcript"], cached["highlights"]
-    else:
-        print(f"Transcribing: {os.path.basename(audio_path)}", flush=True)
-        transcript = transcribe.transcribe(audio_path)
-        candidates = ai_extract.find_candidates(transcript)
-        survivors = ai_extract.filter_candidates(candidates, transcript)
-        if not survivors:
-            raise SystemExit("No candidates survived filtering for this episode.")
-        top = survivors[0]
-        highlights = ai_extract.extract_copy_with_retry(
-            transcript, top["clip_start"], top["clip_end"], top,
+    if not os.path.exists(cache_path):
+        raise SystemExit(
+            f"No plan cache found for {os.path.basename(audio_path)} "
+            f"(expected {os.path.basename(cache_path)}). This harness only "
+            "re-renders an existing script+audio pair -- run "
+            "`main.py --render <slug> <audio_path>` to generate one."
         )
-        with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump({"transcript": transcript, "highlights": highlights}, f)
-
-    # Re-run JUST the extraction (no Groq) if the cached plan predates a schema
-    # field we now need: neither image_scenes (current schema) nor image_prompts
-    # (pre-2026-07-31 plans, still renderable) present. NOTE: missing
-    # video_queries/search_queries is NOT stale — both were removed from the
-    # schema 2026-07-31 (slides now reuse the generated wolf images).
-    has_images = bool(highlights.get("image_scenes") or highlights.get("image_prompts"))
-    if not has_images:
-        print("Cached plan has no image_scenes/image_prompts; regenerating copy for the same window...", flush=True)
-        highlights = ai_extract.extract_copy_with_retry(
-            transcript, highlights["clip_start"], highlights["clip_end"], seed={},
-        )
-        with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump({"transcript": transcript, "highlights": highlights}, f)
+    print(f"Loading cached script + plan: {os.path.basename(cache_path)}", flush=True)
+    with open(cache_path, encoding="utf-8") as f:
+        cached = json.load(f)
+    transcript, highlights = cached["transcript"], cached["highlights"]
 
     start, end = highlights["clip_start"], highlights["clip_end"]
     print(f"Grounded clip window: {start:.2f}-{end:.2f}s ({end - start:.1f}s)", flush=True)
