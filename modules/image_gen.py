@@ -1,8 +1,10 @@
 """AI background generation via OpenAI's gpt-image-2 (primary background source).
 
-Takes the ``image_prompts`` produced by :mod:`ai_extract`, generates one image
-per prompt via the OpenAI Images API, and writes them to ``tmp/bg_<n>.png`` for
-:mod:`video_gen` to use as themed video backgrounds. Motion is added at render
+Takes the structured ``image_scenes`` produced by :mod:`ai_extract` (composed
+into final prompts here via the locked ``STYLE_BLOCK`` template — see
+:func:`compose_prompts`; old cached plans' raw ``image_prompts`` still work),
+generates one image per prompt via the OpenAI Images API, and writes them to
+``tmp/bg_<n>.png`` for :mod:`video_gen` to use as themed video backgrounds. Motion is added at render
 time by ``video_gen._image_background_layers`` (Ken Burns pan/zoom) — this
 module only produces the still frames.
 
@@ -34,6 +36,89 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
+
+# --- Locked visual identity (single source of truth for the brand style) ----
+# ai_extract emits per-scene CONTENT only (image_scenes: beat/concept/action/
+# setting/camera, plus one per-clip wolf_outfit); the STYLE below is appended
+# verbatim by compose_prompts(), so it can never drift with model paraphrasing.
+# Edit the look HERE — no extraction prompt change, no re-extraction needed.
+STYLE_BLOCK = (
+    "Vintage halftone comic-book illustration: flat colors, visible halftone "
+    "dot shading, bold black ink linework, subtle paper-grain texture. Not "
+    "photorealistic, not 3D-rendered, not painterly. Warm vibrant palette — "
+    "saturated mustard gold, terracotta rust orange, vivid kelly green, cream "
+    "and tan, warm brown wood — like sunlit poster art. Bright, warm, sunlit "
+    "or golden-hour daylight; cheerful and alive, never dark, gloomy, or "
+    "night-dominant."
+)
+
+# Story-arc mood per beat (see config.IMAGE_SCENE_BEATS). Tension is allowed in
+# the early beats but ALWAYS upright/determined and brightly lit — the arc
+# lives in posture and scene, never in gloom (the dark 07-29 redesign was
+# rejected; don't reintroduce it here).
+BEAT_MOODS = {
+    "problem": (
+        "focused and confronting the problem head-on, upright and determined, "
+        "never defeated"
+    ),
+    "stakes": (
+        "alert, feeling the weight of the moment, jaw set, still upright and "
+        "in full warm light"
+    ),
+    "reframe": (
+        "struck by a moment of realization, posture opening up, light "
+        "breaking wider across the scene"
+    ),
+    "payoff": "calm, resolved and quietly triumphant, at ease in warm light",
+}
+
+# Used when a beat is unrecognized (old/hand-edited plans).
+_DEFAULT_MOOD = BEAT_MOODS["payoff"]
+
+DEFAULT_OUTFIT = "a mustard-yellow hoodie, dark jeans and clean white sneakers"
+
+NEGATIVE_BLOCK = (
+    "No legible text, words, letters, numbers, or signage anywhere in the "
+    "image. No skulls or death imagery, no cigarettes, alcohol, drugs, or "
+    "vices, no slumped or defeated posture, no violence or gore. No humans, "
+    "no other animals, no second wolf — the wolf is the only figure (a busy "
+    "street or market as a soft anonymous backdrop is fine, with no other "
+    "clearly rendered figure)."
+)
+
+
+def compose_prompts(scenes: list[dict], outfit: str = "") -> list[str]:
+    """Assemble the final gpt-image-2 prompts from ai_extract's scene specs.
+
+    One prompt per scene: locked ``STYLE_BLOCK`` + the wolf character wearing
+    the clip's single locked ``outfit`` + the scene's content fields + the
+    beat's arc mood + ``NEGATIVE_BLOCK``. The scenes follow the clip's story
+    arc (config.IMAGE_SCENE_BEATS: problem x2 -> stakes -> reframe ->
+    payoff x2), so the images read as one character's visual story rather
+    than unrelated wallpapers.
+    """
+    outfit = (outfit or "").strip() or DEFAULT_OUTFIT
+    prompts: list[str] = []
+    for scene in scenes:
+        beat = str(scene.get("beat") or "").strip().lower()
+        mood = BEAT_MOODS.get(beat, _DEFAULT_MOOD)
+        action = str(scene.get("action") or "").strip().rstrip(".")
+        setting = str(scene.get("setting") or "").strip().rstrip(".")
+        camera = str(scene.get("camera") or "").strip().rstrip(".") \
+            or "dynamic three-quarter view with strong depth"
+        concept = str(scene.get("concept") or "").strip().rstrip(".")
+        prompts.append(
+            f"{STYLE_BLOCK} "
+            "Subject: exactly one anthropomorphic wolf character — upright "
+            "human posture and proportions, wolf head and facial features, "
+            f"wearing {outfit} (the same outfit in every image of this set). "
+            f"The wolf is {action}, in {setting}. "
+            f"Camera: {camera}. "
+            f"Mood: {mood}. "
+            f"The scene is a literal visual stand-in for this idea: {concept}. "
+            f"{NEGATIVE_BLOCK}"
+        )
+    return prompts
 
 # Waits (seconds) between retries after a 429/5xx: up to 4 retries.
 RETRY_BACKOFFS = [2, 4, 8, 16]
@@ -176,14 +261,20 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-    # Load the 4 image_prompts from the most recent cached extraction JSON so we
-    # don't spend Groq/Claude credits re-running the upstream steps.
+    # Load the image scenes/prompts from the most recent cached extraction JSON
+    # so we don't spend Groq/Claude credits re-running the upstream steps.
     plans = sorted(glob.glob(os.path.join(config.TMP_DIR, "*.plan.json")), key=os.path.getmtime, reverse=True)
     if not plans:
         raise SystemExit(f"No *.plan.json found in {config.TMP_DIR} - run the pipeline once first.")
     with open(plans[0], encoding="utf-8") as f:
-        prompts = json.load(f)["highlights"]["image_prompts"]
-    print(f"Loaded {len(prompts)} image_prompts from {os.path.basename(plans[0])}\n", flush=True)
+        highlights = json.load(f)["highlights"]
+    scenes = highlights.get("image_scenes")
+    if scenes:
+        prompts = compose_prompts(scenes, highlights.get("wolf_outfit", ""))
+        print(f"Composed {len(prompts)} prompts from image_scenes in {os.path.basename(plans[0])}\n", flush=True)
+    else:
+        prompts = highlights["image_prompts"]  # pre-2026-07-31 cached plan
+        print(f"Loaded {len(prompts)} legacy image_prompts from {os.path.basename(plans[0])}\n", flush=True)
 
     # force=True to actually exercise the API / retry / fallback path this run.
     out = generate_backgrounds(prompts, force=True)

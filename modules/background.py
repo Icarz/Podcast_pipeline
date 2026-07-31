@@ -18,14 +18,20 @@ logger = logging.getLogger(__name__)
 def select_backgrounds(highlights: dict, basename: str = None, force: bool = False) -> list[str]:
     """Return a list of background file paths (all .png).
 
-    Generates one AI image per ``image_prompts`` entry via gpt-image-2, with a
-    local gradient fallback if the API key is missing or generation fails.
-    ``basename`` (the episode's audio basename) namespaces the cache so each
-    episode gets its own fresh, on-brief images instead of colliding on a
-    shared ``bg_<n>.png`` filename — always pass it from pipeline callers.
+    Composes one prompt per ``image_scenes`` entry (locked style template +
+    per-clip ``wolf_outfit`` — see :func:`image_gen.compose_prompts`), falling
+    back to the raw ``image_prompts`` strings of pre-2026-07-31 cached plans.
+    Generation is gpt-image-2 with a local gradient fallback if the API key is
+    missing or generation fails. ``basename`` (the episode's audio basename)
+    namespaces the cache so each episode/clip gets its own fresh, on-brief
+    images instead of colliding on a shared ``bg_<n>.png`` filename — always
+    pass it from pipeline callers.
     """
-    images = image_gen.generate_backgrounds(
-        highlights.get("image_prompts", []), basename=basename, force=force,
-    )
+    scenes = highlights.get("image_scenes")
+    if scenes:
+        prompts = image_gen.compose_prompts(scenes, highlights.get("wolf_outfit", ""))
+    else:
+        prompts = highlights.get("image_prompts", [])
+    images = image_gen.generate_backgrounds(prompts, basename=basename, force=force)
     logger.info("Background source: gpt-image-2/gradient images (%d files)", len(images))
     return images

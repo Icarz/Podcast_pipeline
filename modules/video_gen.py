@@ -647,12 +647,13 @@ if __name__ == "__main__":
             json.dump({"transcript": transcript, "highlights": highlights}, f)
 
     # Re-run JUST the extraction (no Groq) if the cached plan predates a schema
-    # field we now need: missing search_queries/video_queries, or video_queries
-    # still in the old plain-string form (now {keyword, query} objects).
-    vq = highlights.get("video_queries")
-    stale_vq = not vq or not all(isinstance(v, dict) for v in vq)
-    if "search_queries" not in highlights or stale_vq:
-        print("Cached plan missing/old search_queries/video_queries; regenerating copy for the same window...", flush=True)
+    # field we now need: neither image_scenes (current schema) nor image_prompts
+    # (pre-2026-07-31 plans, still renderable) present. NOTE: missing
+    # video_queries/search_queries is NOT stale — both were removed from the
+    # schema 2026-07-31 (slides now reuse the generated wolf images).
+    has_images = bool(highlights.get("image_scenes") or highlights.get("image_prompts"))
+    if not has_images:
+        print("Cached plan has no image_scenes/image_prompts; regenerating copy for the same window...", flush=True)
         highlights = ai_extract.extract_copy_with_retry(
             transcript, highlights["clip_start"], highlights["clip_end"], seed={},
         )
@@ -662,21 +663,17 @@ if __name__ == "__main__":
     start, end = highlights["clip_start"], highlights["clip_end"]
     print(f"Grounded clip window: {start:.2f}-{end:.2f}s ({end - start:.1f}s)", flush=True)
 
-    print("\n=== search_queries (slides) ===")
-    for i, q in enumerate(highlights.get("search_queries", []), 1):
-        print(f"  {i}. {q.encode('ascii', 'replace').decode('ascii')}")
-
-    print("\n=== video_queries (clip background: keyword -> query) ===")
-    for i, vq in enumerate(highlights.get("video_queries", []), 1):
-        kw = (vq.get("keyword") if isinstance(vq, dict) else "") or "?"
-        q = (vq.get("query") if isinstance(vq, dict) else vq) or ""
-        line = f"  {i}. {kw}  ->  {q}"
+    print("\n=== image_scenes (background story arc: beat -> action @ setting) ===")
+    for i, sc in enumerate(highlights.get("image_scenes", []), 1):
+        line = f"  {i}. [{sc.get('beat', '?')}] {sc.get('action', '')} @ {sc.get('setting', '')}"
         print(line.encode("ascii", "replace").decode("ascii"))
+    if not highlights.get("image_scenes"):
+        print("  (legacy plan: raw image_prompts will be used as-is)")
 
     # Ordered chain: gpt-image-2 image -> gradient.
     audio_basename = os.path.splitext(os.path.basename(audio_path))[0]
     backgrounds = background.select_backgrounds(highlights, basename=audio_basename)
-    src = "Pexels video" if backgrounds[0].lower().endswith(".mp4") else "Gemini/gradient image"
+    src = "Pexels video" if backgrounds[0].lower().endswith(".mp4") else "gpt-image-2/gradient image"
     print(f"\nBackground source: {src}")
     print(f"Backgrounds: {len(backgrounds)} -> {[os.path.basename(b) for b in backgrounds]}", flush=True)
 

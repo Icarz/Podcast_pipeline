@@ -335,8 +335,13 @@ def _render_quote(path: str, quote: str, attribution: str | None, idx: int, bg_p
                 "photo" if bg_path else "solid", ", attributed" if attribution else "")
 
 
-def _render_cta(path: str, idx: int) -> None:
-    """Closing 'follow for more' CTA slide. Solid brand background, no photo query."""
+def _render_cta(path: str, idx: int, bg_path: str | None = None) -> None:
+    """Closing 'follow for more' CTA slide.
+
+    Renders on ``bg_path`` (the wolf payoff-in-action image in the branded
+    deck) with the usual dark scrim, or the solid brand background when no
+    image is available (legacy Pexels decks always pass None here).
+    """
     eb_h = _eyebrow_block_h()
     text = "FOLLOW FOR MORE"
 
@@ -344,7 +349,7 @@ def _render_cta(path: str, idx: int) -> None:
     block_h = eb_h + EYEBROW_GAP + lh * len(lines)
     top = SAFE_TOP + (SAFE_H - block_h) // 2
 
-    img, draw = _photo_canvas(None, top, top + block_h)
+    img, draw = _photo_canvas(bg_path, top, top + block_h)
     _draw_eyebrow(draw, "STAY IN THE LOOP", top)
     y = top + eb_h + EYEBROW_GAP
     for line in lines:
@@ -353,7 +358,8 @@ def _render_cta(path: str, idx: int) -> None:
         y += lh
     _draw_footer(draw, idx)
     img.save(path)
-    logger.info("Rendered slide: %s (cta)", os.path.basename(path))
+    logger.info("Rendered slide: %s (cta, %s)", os.path.basename(path),
+                "photo" if bg_path else "solid")
 
 
 # Optional attribution keys the extraction MIGHT carry. The current ai_extract
@@ -400,14 +406,40 @@ def _fetch_slide_backgrounds(queries: list[str], n_insights: int, force: bool) -
     return paths
 
 
-def build_slides(highlights: dict, force: bool = False) -> list[str]:
-    """Render the editorial deck on full-bleed Pexels photo backgrounds.
+def _map_photos_to_slides(photos: list[str], n_insights: int) -> tuple[list[str | None], str | None]:
+    """Map the clip's generated background images onto the slide deck.
+
+    ``photos`` is the (usually 6-image) story-arc set from the video render,
+    in beat order [problem, problem, stakes, reframe, payoff-in-action,
+    payoff-resolved]. Returns ``(bgs, follow_bg)`` where ``bgs`` is in slide
+    order [cover, insight 1..n, quote]: cover = scene 1 (the hook IS the
+    problem), insights = scenes 2-4, quote = scene 6 (resolved closure), and
+    the FOLLOW slide gets scene 5 — so all 6 images are used and every slide
+    is branded. Missing entries stay None (solid-background fallback).
+    """
+    def _at(i: int) -> str | None:
+        return photos[i] if 0 <= i < len(photos) else None
+
+    bgs = [_at(0)] + [_at(1 + k) for k in range(n_insights)]
+    bgs.append(_at(5) if len(photos) > 5 else _at(len(photos) - 1))  # quote
+    follow_bg = _at(4) if len(photos) > 5 else None
+    return bgs, follow_bg
+
+
+def build_slides(highlights: dict, force: bool = False, photo_paths: list[str] | None = None) -> list[str]:
+    """Render the editorial deck on full-bleed image backgrounds.
 
     Order: COVER (hook), INSIGHT 01-03 (insights), QUOTE (best_quote), FOLLOW (CTA).
-    Requires keys: hook, insights (>=1, uses up to 3), best_quote. Uses
-    search_queries for the photo backgrounds; each slide degrades to the solid
-    dark background if its photo can't be fetched. The closing FOLLOW slide is
-    always solid background. ``force`` re-downloads photos.
+    Requires keys: hook, insights (>=1, uses up to 3), best_quote.
+
+    ``photo_paths`` (the branded path, since 2026-07-31): the clip's generated
+    wolf background images, passed straight from the video render — video and
+    carousel become one body of work (see :func:`_map_photos_to_slides`; the
+    FOLLOW slide gets an image too). Without ``photo_paths`` (old cached plans,
+    the ``__main__`` harness) the legacy Pexels flow fetches one stock photo
+    per ``search_queries`` entry and the FOLLOW slide stays solid. Either way
+    each slide degrades to the solid dark background when its image is
+    missing. ``force`` re-downloads photos (legacy path only).
     """
     os.makedirs(config.SLIDE_DIR, exist_ok=True)
 
@@ -418,7 +450,12 @@ def build_slides(highlights: dict, force: bool = False) -> list[str]:
         raise ValueError("highlights needs hook, insights, and best_quote to build the deck")
 
     insights = insights[:3]
-    bgs = _fetch_slide_backgrounds(highlights.get("search_queries") or [], len(insights), force)
+    if photo_paths:
+        bgs, follow_bg = _map_photos_to_slides(photo_paths, len(insights))
+        logger.info("Slide backgrounds: %d generated wolf image(s) (branded deck)", len(photo_paths))
+    else:
+        bgs = _fetch_slide_backgrounds(highlights.get("search_queries") or [], len(insights), force)
+        follow_bg = None
 
     paths: list[str] = []
 
@@ -435,7 +472,7 @@ def build_slides(highlights: dict, force: bool = False) -> list[str]:
     _render_quote(_path(qi), quote, _attribution(highlights), idx=qi, bg_path=bgs[qi])
 
     ci = len(paths)
-    _render_cta(_path(ci), idx=ci)
+    _render_cta(_path(ci), idx=ci, bg_path=follow_bg)
 
     logger.info("Built %d slides in %s", len(paths), config.SLIDE_DIR)
     return paths

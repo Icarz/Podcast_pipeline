@@ -142,6 +142,9 @@ def download_latest(feed, entry) -> dict:
 
     meta = _entry_metadata(entry)
     meta["audio_path"] = audio_path
+    # Enclosure URL kept so the candidate bank can re-download the audio at
+    # render time if tmp/ was cleaned between --scan and --bank.
+    meta["audio_url"] = audio_url
     return meta
 
 

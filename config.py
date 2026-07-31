@@ -218,7 +218,7 @@ MAX_CLIPS_PER_EPISODE = 5
 # Requested claude-sonnet-4-20250514, but it 404s on this account (retired).
 # Using its drop-in replacement, the current Sonnet.
 EXTRACT_MODEL = "claude-sonnet-4-6"
-EXTRACT_MAX_TOKENS = 2000
+EXTRACT_MAX_TOKENS = 3000  # raised from 2000: 6 structured image_scenes objects need headroom
 # Target clip window the model should aim for, in seconds.
 # Capped at 58s so the finished Short stays UNDER 60s — YouTube blocks the
 # Pixabay music bed on Shorts that are 60s or longer, so we keep a 2s safety
@@ -265,13 +265,39 @@ BG_DARKEN = 0.35                     # brightness multiplier (0=black, 1=origina
 # --- Candidate shortlist (Stage 1 of the two-stage extraction) ---
 CANDIDATE_COUNT = 5                  # max ranked clip candidates find_candidates() surfaces
 
+# --- Candidate bank (cross-episode clip backlog; modules/candidate_bank.py) ---
+# `main.py --scan` batch-runs Stage 1 over unscanned episodes and banks the
+# surviving candidates; `main.py --bank` picks the best candidate ACROSS all
+# scanned episodes/feeds instead of gambling on one random episode. Candidates
+# are consumed individually, so one episode can yield several Shorts over time.
+CANDIDATE_BANK_PATH = os.path.join(TMP_DIR, "candidate_bank.json")
+SCAN_EPISODES_PER_RUN = 3        # episodes scanned per `--scan` invocation (--limit overrides)
+EPISODE_CLIP_SPACING_DAYS = 14   # min days between two rendered clips of the SAME episode
+BANK_REVIEW_COUNT = 10           # max banked candidates shown per --bank review session
+
 # --- AI-generated themed backgrounds (OpenAI gpt-image-2 — primary background source) ---
 OPENAI_IMAGE_MODEL = "gpt-image-2"
 OPENAI_IMAGE_SIZE = "1024x1536"      # portrait, closest match to the 9:16 video frame
 OPENAI_IMAGE_QUALITY = "medium"      # low/medium/high - medium is the cost/quality default
 OPENAI_IMAGE_TIMEOUT = 90            # seconds per HTTP request
-IMAGE_PROMPT_COUNT = 4               # number of background prompts ai_extract emits
+# Number of illustrated background images per clip. ai_extract emits this many
+# structured `image_scenes` objects (scene CONTENT only); image_gen composes the
+# final prompts by wrapping each scene in the locked style template
+# (image_gen.STYLE_BLOCK — edit the look THERE, not in the extraction prompt).
+# 6 (raised from 4 on 2026-07-31): image every ~8-9s of a ~52s clip for faster
+# visual pacing; ~$0.28/short at medium quality.
+IMAGE_PROMPT_COUNT = 6
+# Fixed story-arc beat per scene position: the 4 content quarters map to 6
+# scenes (problem and payoff get two shots each). ai_extract coerces whatever
+# the model emits to exactly this sequence; image_gen maps each beat to a mood
+# line in the composed prompt.
+IMAGE_SCENE_BEATS = ["problem", "problem", "stakes", "reframe", "payoff", "payoff"]
+# LEGACY (2026-07-31): slides now reuse the generated wolf images; search_queries
+# was removed from ai_extract's schema. Kept only for slide_gen's legacy Pexels
+# path (old cached plans / the slide_gen __main__ harness).
 SEARCH_QUERY_COUNT = 5               # one art-directed stock-photo query per carousel slide
+# LEGACY (2026-07-31): ai_extract no longer emits `video_queries` — these
+# constants only serve pexels_bg's standalone harness / old cached plans.
 VIDEO_QUERY_COUNT = 4                # stock-VIDEO background SLOTS to actually fill
 VIDEO_QUERY_SPARE = 1                # extra backup query ai_extract emits as a fallback
 # What ai_extract emits: the 4 primary beats PLUS spare backups (5 total). pexels_bg

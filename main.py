@@ -33,6 +33,7 @@ import config
 from modules import (
     ai_extract,
     background,
+    candidate_bank,
     posted_history,
     rss_ingest,
     slide_gen,
@@ -179,7 +180,10 @@ def _pick_episode_and_candidate(feed_arg: str, interactive: bool = True) -> tupl
     """
     feed_url = config.PODCAST_FEEDS.get(feed_arg, feed_arg)
     host_name = config.PODCAST_HOSTS.get(feed_arg)
-    used_guids = set(posted_history.load().keys())
+    # Exclude both posted episodes AND bank-scanned episodes — a banked
+    # episode's clips are consumed via --bank, so re-picking it here would
+    # double-spend its candidates.
+    used_guids = set(posted_history.load().keys()) | candidate_bank.scanned_guids()
 
     while True:
         picked = rss_ingest.pick_random_entry(feed_url, exclude_guids=used_guids, host_name=host_name)
@@ -314,7 +318,6 @@ def run(
     ``_publish_stage`` and the summary printer already treat an empty
     ``slides`` list as a no-op. Returns a summary dict.
     """
-    podcast_name = _display_name(feed_arg)
     logger.info("Starting pipeline | feed=%s", feed_arg)
 
     if episode is not None:
@@ -367,11 +370,6 @@ def run(
             break
 
     logger.info("Episode: %s", episode.get("title"))
-    if not os.path.exists(audio_path):
-        raise FileNotFoundError(f"Downloaded audio missing: {audio_path}")
-
-    cs, ce = float(highlights["clip_start"]), float(highlights["clip_end"])
-    logger.info("Clip window: %.2f-%.2fs (%.1fs)", cs, ce, ce - cs)
 
     # Retire the episode immediately after the plan is built (RSS mode only —
     # 'manual' --url episodes are never excluded from re-selection since
@@ -381,10 +379,42 @@ def run(
     if guid and feed_arg != "manual":
         posted_history.mark_used(guid=guid, feed=feed_arg, title=episode.get("title", ""))
 
+    return _render_and_publish(
+        feed_arg, episode, transcript, highlights,
+        privacy_status=privacy_status, render_slides=render_slides,
+    )
+
+
+def _render_and_publish(
+    feed_arg: str,
+    episode: dict,
+    transcript: dict,
+    highlights: dict,
+    privacy_status: str = "private",
+    render_slides: bool = True,
+    bg_basename: str | None = None,
+) -> dict:
+    """Steps 4-7 (backgrounds -> video -> slides -> publish) + summary dict.
+
+    Shared render tail for the classic :func:`run` flow and the --bank flow.
+    ``bg_basename`` namespaces the AI-background image cache and defaults to
+    the audio basename; bank renders pass a per-clip-window suffix so a second
+    clip from the SAME episode never silently reuses the first clip's images.
+    """
+    audio_path = episode["audio_path"]
+    podcast_name = _display_name(feed_arg)
+    if not os.path.exists(audio_path):
+        raise FileNotFoundError(f"Downloaded audio missing: {audio_path}")
+
+    cs, ce = float(highlights["clip_start"]), float(highlights["clip_end"])
+    logger.info("Clip window: %.2f-%.2fs (%.1fs)", cs, ce, ce - cs)
+
     # 4) Background selection: gpt-image-2 image -> gradient chain.
     logger.info("[4/6] Backgrounds: select (gpt-image-2 -> gradient)")
     audio_basename = os.path.splitext(os.path.basename(audio_path))[0]
-    backgrounds = background.select_backgrounds(highlights, basename=audio_basename)
+    backgrounds = background.select_backgrounds(
+        highlights, basename=bg_basename or audio_basename
+    )
     bg_kind = "video" if backgrounds and backgrounds[0].lower().endswith(".mp4") else "image"
     logger.info("Backgrounds: %d %s file(s)", len(backgrounds), bg_kind)
 
@@ -398,10 +428,11 @@ def run(
         background_images=backgrounds,
     )
 
-    # 6) Render the static slide deck (hook + 3 insights + quote = 5 PNGs).
+    # 6) Render the static slide deck (hook + 3 insights + quote + CTA), on the
+    #    same generated wolf images as the video — one branded body of work.
     if render_slides:
-        logger.info("[6/6] Slides: render deck")
-        slides = slide_gen.build_slides(highlights)
+        logger.info("[6/6] Slides: render deck (branded on the clip's wolf images)")
+        slides = slide_gen.build_slides(highlights, photo_paths=backgrounds)
     else:
         logger.info("[6/6] Slides: skipped (render_slides=False)")
         slides = []
@@ -470,6 +501,174 @@ def run_auto(privacy_status: str = "private") -> dict | None:
     except Exception as exc:  # noqa: BLE001 - feed/network problems must not break scheduling
         logger.warning("Auto mode: feed '%s' unavailable (%s); exiting cleanly", feed_key, exc)
         return None
+
+
+def scan_feed(feed_arg: str, limit: int) -> None:
+    """Batch Stage-1 scan (``--scan``): bank candidates, render nothing.
+
+    Picks up to ``limit`` unscanned episodes of ``feed_arg`` (prescreen and
+    brand filters still apply via :func:`rss_ingest.pick_random_entry`),
+    transcribes each, runs Stage 1 (find + filter), and stores every surviving
+    candidate in the bank for a later ``--bank`` review. Zero-survivor episodes
+    are banked too (scanned-and-exhausted), so they're never re-scanned. No
+    human interaction, no Stage 2 copywriting, no render.
+    """
+    feed_url = config.PODCAST_FEEDS.get(feed_arg, feed_arg)
+    host_name = config.PODCAST_HOSTS.get(feed_arg)
+    exclude = set(posted_history.load().keys()) | candidate_bank.scanned_guids()
+
+    banked = 0
+    for n in range(1, limit + 1):
+        picked = rss_ingest.pick_random_entry(feed_url, exclude_guids=exclude, host_name=host_name)
+        if picked is None:
+            logger.info("Scan: RSS window for '%s' exhausted after %d episode(s)", feed_arg, n - 1)
+            break
+        feed_obj, entry, meta = picked
+        guid = meta.get("guid", "")
+        logger.info("[scan %d/%d] Episode: %r (guid=%s)", n, limit, meta.get("title"), guid)
+        if guid:
+            exclude.add(guid)
+
+        try:
+            episode = rss_ingest.download_latest(feed_obj, entry)
+            transcript = _load_or_build_transcript(episode["audio_path"])
+            candidates = ai_extract.find_candidates(transcript)
+            survivors = ai_extract.filter_candidates(candidates, transcript)
+        except Exception as exc:  # noqa: BLE001 - one bad episode must not kill the batch
+            logger.warning("Scan: episode %r failed (%s); continuing", meta.get("title"), exc)
+            continue
+
+        basename = os.path.splitext(os.path.basename(episode["audio_path"]))[0]
+        candidate_bank.add_episode(
+            guid=guid,
+            feed=feed_arg,
+            title=episode.get("title", ""),
+            basename=basename,
+            audio_url=episode.get("audio_url"),
+            candidates=survivors,
+        )
+        banked += len(survivors)
+        print(f"  -> banked {len(survivors)} candidate(s) from {episode.get('title')!r}")
+
+    s = candidate_bank.stats()
+    print(
+        f"\nScan complete: {banked} new candidate(s) banked this run. "
+        f"Bank now holds {s['available']} available candidate(s) "
+        f"across {s['episodes']} scanned episode(s)."
+    )
+
+
+def _find_banked_audio(basename: str) -> str | None:
+    """Locate a banked episode's cached audio in tmp/, any audio extension."""
+    for ext in (".mp3", ".m4a", ".aac", ".wav", ".ogg"):
+        path = os.path.join(config.TMP_DIR, basename + ext)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _print_bank_candidates(cands: list[dict]) -> None:
+    print("\nBanked candidates (best first):")
+    for i, c in enumerate(cands, 1):
+        flag = "  [!] METAPHOR HOOK — verify the payoff lands in the first sentence" \
+            if ai_extract.is_metaphor_hook(c["hook"]) else ""
+        scanned = (c.get("scanned_at") or "")[:10]
+        print(f"  {i}. [{c['feed']}] {c['episode_title']!r} (episode pick #{c['rank'] + 1}, scanned {scanned})")
+        print(f"     [{c['clip_start']:.1f}-{c['clip_end']:.1f}s] {c['hook']!r}{flag}")
+        print(f"     exposes: {c.get('exposes', '')}")
+        print(f"     reframe: {c.get('reframe', '')}")
+        print(f"     payoff : {c.get('payoff', '')}")
+
+
+def run_from_bank(privacy_status: str = "private", render_slides: bool = True) -> dict | None:
+    """``--bank``: review banked candidates across ALL feeds, pick one, render it.
+
+    Presents up to ``config.BANK_REVIEW_COUNT`` available candidates (spacing
+    rule applied). Input: a number renders that candidate; ``x<N>`` (e.g.
+    ``x3``) permanently rejects candidate N and re-shows the list; ``0`` exits.
+    A Stage 2 failure marks the candidate rejected and returns to the list.
+    Returns the render summary dict, or ``None`` if nothing was rendered.
+    """
+    while True:
+        cands = candidate_bank.available_candidates()
+        if not cands:
+            print(
+                "Candidate bank has nothing available (empty, exhausted, or all "
+                "hidden by the same-episode spacing rule). Run "
+                "`main.py <feed> --scan` to stock it."
+            )
+            return None
+        shown = cands[: config.BANK_REVIEW_COUNT]
+        _print_bank_candidates(shown)
+        choice = input("Pick a number, x<N> to reject one, or 0 to exit: ").strip().lower()
+
+        if choice in ("", "0"):
+            return None
+        if choice.startswith("x"):
+            try:
+                idx = int(choice[1:]) - 1
+            except ValueError:
+                idx = -1
+            if 0 <= idx < len(shown):
+                c = shown[idx]
+                candidate_bank.mark_candidate(c["guid"], c["index"], "rejected")
+                print(f"Rejected: {c['hook']!r}")
+            else:
+                print("Invalid reject index.")
+            continue
+        try:
+            idx = int(choice) - 1
+        except ValueError:
+            idx = -1
+        if not (0 <= idx < len(shown)):
+            print("Invalid choice.")
+            continue
+        chosen = shown[idx]
+
+        # Materialize audio + transcript (re-download / re-transcribe if tmp/
+        # was cleaned since the scan; both are cache hits in the common case).
+        audio_path = _find_banked_audio(chosen["basename"])
+        if audio_path is None:
+            if not chosen.get("audio_url"):
+                print("Audio file is gone and no audio_url was stored — cannot render this candidate.")
+                continue
+            logger.info("Bank: re-downloading audio for %r", chosen["episode_title"])
+            audio_path = rss_ingest._download_audio(chosen["audio_url"], chosen["basename"])
+        transcript = _load_or_build_transcript(audio_path)
+
+        logger.info(
+            "Extracting copy (Claude %s) for banked candidate [%.1f-%.1fs] of %r",
+            config.EXTRACT_MODEL, chosen["clip_start"], chosen["clip_end"],
+            chosen["episode_title"],
+        )
+        try:
+            highlights = ai_extract.extract_copy_with_retry(
+                transcript, chosen["clip_start"], chosen["clip_end"], chosen,
+            )
+        except (ValueError, anthropic.RateLimitError) as exc:
+            logger.warning(
+                "Stage 2 failed for banked candidate (%s); marking it rejected", exc
+            )
+            candidate_bank.mark_candidate(chosen["guid"], chosen["index"], "rejected")
+            print("Stage 2 copywriting failed for that candidate — it has been rejected. Pick another.")
+            continue
+
+        _write_plan(_plan_cache_path(audio_path), transcript, highlights)
+        candidate_bank.mark_candidate(chosen["guid"], chosen["index"], "used")
+
+        episode = {
+            "title": chosen["episode_title"],
+            "guid": chosen["guid"],
+            "audio_path": audio_path,
+        }
+        # Per-clip-window background namespace: a second clip from the same
+        # episode must generate ITS OWN images, not reuse the first clip's.
+        bg_basename = f"{chosen['basename']}_c{int(float(highlights['clip_start']))}"
+        return _render_and_publish(
+            chosen["feed"], episode, transcript, highlights,
+            privacy_status=privacy_status, render_slides=render_slides,
+            bg_basename=bg_basename,
+        )
 
 
 def _print_summary(result: dict) -> None:
@@ -559,6 +758,33 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--scan",
+        action="store_true",
+        help=(
+            "Batch Stage-1 scan: transcribe up to --limit unscanned episodes of "
+            "FEED and bank their surviving clip candidates for a later --bank "
+            "review. No copywriting, no render."
+        ),
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=config.SCAN_EPISODES_PER_RUN,
+        help=(
+            "Episodes to scan per --scan run "
+            f"(default: {config.SCAN_EPISODES_PER_RUN}). Only valid with --scan."
+        ),
+    )
+    parser.add_argument(
+        "--bank",
+        action="store_true",
+        help=(
+            "Review banked candidates across ALL feeds, pick one, and render it "
+            "(Stage 2 + video + slides). Stock the bank with --scan first. "
+            "The positional feed argument is ignored."
+        ),
+    )
+    parser.add_argument(
         "--privacy",
         choices=["private", "unlisted", "public"],
         default="private",
@@ -579,9 +805,23 @@ if __name__ == "__main__":
         parser.error("--url cannot be combined with --auto")
     if args.title and not args.url:
         parser.error("--title is only valid together with --url")
+    if args.scan and args.bank:
+        parser.error("--scan and --bank are separate steps; run them one at a time")
+    if (args.scan or args.bank) and (args.auto or args.url):
+        parser.error("--scan/--bank cannot be combined with --auto or --url")
 
     try:
-        if args.auto:
+        if args.scan:
+            scan_feed(args.feed, args.limit)
+            sys.exit(0)
+        elif args.bank:
+            result = run_from_bank(
+                privacy_status=args.privacy, render_slides=not args.no_slides
+            )
+            if result is None:
+                # Nothing rendered (empty bank or user exited the review).
+                sys.exit(0)
+        elif args.auto:
             result = run_auto(privacy_status=args.privacy)
             if result is None:
                 # Nothing to do (no posting day / already posted / feed down).

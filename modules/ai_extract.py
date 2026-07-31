@@ -197,8 +197,9 @@ COPY_SYSTEM_PROMPT = (
     "WINNING FORMULA (use one of these structures every time):\n"
     "  - 'Your [brain/nervous system/body] [won't let go of/is addicted to/is hijacking you with] "
     "[common behavior] — [until/unless] [condition]' — DEFAULT / HIGHEST RETENTION (68-69% avg-view-"
-    "duration, the best of any hook family tested). Prioritize this whenever the clip is TIER 1 "
-    "topic. The mechanism named must be immediately, viscerally felt — not abstract — so the payoff "
+    "duration, the best of any hook family tested). Prioritize this whenever the clip reveals a "
+    "psychological/neurological mechanism acting on the viewer without their awareness. The "
+    "mechanism named must be immediately, viscerally felt — not abstract — so the payoff "
     "lands with almost no drop-off.\n"
     "  - 'You're [doing common thing] and it's [unexpected negative consequence]'\n"
     "  - '[Common belief] is a lie — here's what [wise/successful people] actually do'\n"
@@ -304,315 +305,89 @@ COPY_SYSTEM_PROMPT = (
     '  "title"       : string — a punchy video title (<= 80 chars).\n'
     '  "hashtags"    : array of strings — 3 to 8 relevant hashtags, each '
     'starting with "#".\n'
-    '  "image_prompts": array of exactly 4 strings — AI-image-generation '
-    "prompts for the clip's 4 background images, one per quarter of the clip "
-    "window. See the IMAGE_PROMPTS art-direction rules below.\n"
-    '  "search_queries": array of exactly 5 strings — one art-directed stock-'
-    "PHOTO search query per carousel slide, IN THIS ORDER: [0] cover (matches the "
-    "hook), [1] insight 1, [2] insight 2, [3] insight 3, [4] quote. Each 2-4 "
-    "words. See the SEARCH_QUERIES art-direction rules below.\n"
-    '  "video_queries": array of exactly 5 OBJECTS — art-directed stock-VIDEO '
-    "beats for the moving background BEHIND the chosen clip (clip_start to "
-    "clip_end). The FIRST 4 are the primary beats; the 5th is a SPARE BACKUP "
-    "beat (same tone, a different scene) used only if one of the primary clips "
-    "can't be sourced. These are SEPARATE from search_queries and tuned for "
-    'motion footage. Each object is {"keyword": <one concept word>, "query": '
-    "<2-4 word portrait stock-video search>}. See the VIDEO_QUERIES "
-    "art-direction rules below.\n\n"
-    "NEVER DEPICT (HARD BLACKLIST — applies to BOTH video_queries AND "
-    "search_queries). NEVER produce queries that would surface footage/photos "
-    "depicting any of these:\n"
-    "  - Hunched, slumped, head-down, or seated-in-defeat human postures. The "
-    "body must read upright, in motion, or in calm purposeful stillness.\n"
-    "  - Smoking, vaping, drinking alcohol, drug use, junk food, or any active "
-    "vice or unhealthy behavior.\n"
-    "  - Readable signage, graffiti, books with legible text, flipcharts, "
-    "screens displaying words, or any on-screen text that a viewer can read.\n"
-    "  - Stadiums, conferences, presentations to audiences, or any organized "
-    "group/event setting. A person walking through a naturally busy street or "
-    "public space is fine — the subject must remain a SINGLE identifiable figure "
-    "among anonymous passersby, never a crowd scene where no individual stands out.\n"
-    "  - Crowds of any size, religious gatherings, political gatherings, "
-    "protests, marches, festivals, or any scene showing an identifiable "
-    "ethnic, cultural, or religious group activity. If a query could plausibly "
-    "return a photo of a mass of people, do not write it — no 'crowd passing', "
-    "'crowd rushing', 'people gathering', or similar phrasing, ever.\n"
-    "  - MORE THAN ONE PERSON, period. No couples, no duos, no two men/two "
-    "women, no friends walking together, no families, no partners. Every "
-    "single query — video AND photo — must depict EXACTLY ONE man, alone, "
-    "with no other person visible in frame. If the transcript's content "
-    "literally compares two people or two paths ('you and I', 'him vs her', "
-    "'one person does X, another does Y'), you MUST still depict only ONE "
-    "figure — the viewer's own single path — never render the comparison as "
-    "two figures in one shot.\n"
-    "  - Faces of identifiable people (close-up portraits where the person is "
-    "the subject).\n"
-    "  - Person lying in bed, or intimate/sensual positioning.\n"
-    "  - Traffic, cars, busy intersections, or stationary urban infrastructure "
-    "(power lines, construction, parking lots). Walking/running THROUGH a city is "
-    "allowed — the person must be the subject, not the infrastructure.\n"
-    "  - Flowers, food styling, or Pinterest-aesthetic flat-lay arrangements.\n"
-    "  - Coffee cups, mugs, energy drinks, supplement bottles, pills, or any food "
-    "or drink being prepared, held, or consumed. No kitchen scenes, no café "
-    "counter shots, no hands wrapped around a mug.\n"
-    "  - Female figures. Every human subject must read as MALE — a man working on "
-    "himself. A female figure breaks viewer identification for this audience.\n"
-    "  - Vacation, leisure, or tourism aesthetics: beach strolls, coastal walks, "
-    "people lounging at sunset, resort or holiday scenery, anyone who looks like "
-    "they are relaxing or sightseeing. Every scene must feel deliberate and "
-    "purposeful — the subject is working, training, thinking, or moving with "
-    "intent. Not unwinding.\n"
-    "  - Rooftops or cityscapes that read as poor, informal, densely packed, or "
-    "under-developed (cramped tin/concrete rooftops, laundry lines, water tanks, "
-    "crowded slum-style housing, visible urban poverty). A rooftop or skyline "
-    "shot must always read as a modern, affluent BIG-CITY skyline — glass "
-    "high-rises, clean skyscraper silhouettes, a downtown financial-district "
-    "feel. Write rooftop queries as 'rooftop skyline' / 'rooftop city skyline' / "
-    "'skyscraper rooftop', never bare 'rooftop', so the search doesn't drift "
-    "toward residential/informal rooftop stock footage.\n\n"
-    "IMAGE_PROMPTS — exactly 4 AI-image-generation prompts, one per quarter of "
-    "the clip window (same 4-quarter split you use for VIDEO_QUERIES STEP 1). "
-    "Each prompt generates ONE illustrated background image. FIXED STYLE — "
-    "identical for every prompt, every clip, no variation, ever:\n"
-    "  - Vintage halftone comic-book illustration: flat colors, visible "
-    "halftone dot shading, bold black ink linework, subtle paper-grain "
-    "texture. NOT photorealistic, NOT 3D-rendered, NOT painterly.\n"
-    "  - Palette: WARM AND VIBRANT, not muted — saturated mustard/gold, "
-    "terracotta/rust orange, vivid kelly green (foliage/plants), cream/tan, "
-    "warm brown wood. Think sunlit poster art, not faded vintage print.\n"
-    "  - Mood/lighting: BRIGHT, warm, sunlit or golden-hour daylight is the "
-    "default — cheerful and lively, like the middle of an ordinary good day. "
-    "Do NOT default to night, single-lamp, or deep-shadow scenes — those are "
-    "the exception (at most 1 of the 4 images), never the pattern across a "
-    "clip. No image should read as dark, gloomy, or somber; the wolf's mood "
-    "is calm/determined, never sad, never in shadow-drenched isolation.\n"
-    "SUBJECT (locked, every image): exactly ONE anthropomorphic wolf "
-    "character — upright, human posture and proportions, ordinary human "
-    "clothing (flannel shirt, hoodie, jeans, sneakers), wolf head and facial "
-    "features. The wolf is always ALONE — no humans, no other animals, no "
-    "second wolf, ever.\n"
-    "SCENE — TWO REQUIREMENTS, BOTH MANDATORY:\n"
-    "  1. LITERAL PROP OR GESTURE, NOT JUST MOOD: for each of the 4 quarters, "
-    "identify the EXACT thing being said (the specific object, decision, or "
-    "action named or implied in that quarter's words — a list, a plan, a "
-    "choice between two things, a habit, a clock, money, a mirror, whatever "
-    "it actually is) and put a concrete visual stand-in for THAT THING in "
-    "the wolf's hands or in the frame. A viewer who can't hear the audio "
-    "should still be able to guess roughly what's being talked about from "
-    "the image alone. A generic mood shot with no connection to the specific "
-    "sentence on screen is a FAILURE of this field, no matter how good it "
-    "looks.\n"
-    "    Example: quarter says 'you plan all the external things to do, not "
-    "who to become' -> the wolf is literally holding/crossing off a written "
-    "to-do list in one hand while looking at his own reflection in a mirror "
-    "or window with the other — the external-list vs. internal-self contrast "
-    "is IN the image, not implied by mood.\n"
-    "  2. VARY THE PLACE — the wolf is NOT stuck at home. Across the 4 "
-    "images, mix indoor AND outdoor, domestic AND public settings, and lean "
-    "toward OUT-IN-THE-WORLD settings over domestic ones by default. Rotate "
-    "through a wide range and never repeat the same setting twice in one "
-    "clip: a gym or outdoor workout area (mid-exercise, holding weights/on a "
-    "track), a busy sunlit street or crosswalk, riding in or driving a car "
-    "(shot from inside the car or from the sidewalk as it passes), a sunny "
-    "fire-escape or balcony packed with potted plants, a rooftop with a city "
-    "skyline behind him, a market stall, a park bench, a porch or stoop, a "
-    "garden, a workshop or garage with big open light, a laundromat, a bus "
-    "stop — with home settings (couch, kitchen, desk, doorway) used no more "
-    "than once per clip, never the majority. The setting is chosen to fit "
-    "the literal prop/gesture from requirement 1 — pick whichever place "
-    "makes that concrete action make sense, don't force it into a domestic "
-    "room by default.\n"
-    "CINEMATIC COMPOSITION: every prompt should read like a still from a "
-    "well-shot film — dynamic camera angle (low angle, high angle, "
-    "three-quarter view, through a car windshield/window, tracking alongside "
-    "a moving subject), strong foreground/background depth, purposeful "
-    "motion or energy where the scene calls for it (wind, motion blur on "
-    "passing traffic, a mid-stride runner). \"Cinematic\" here means "
-    "COMPOSITION AND ENERGY, never darkness or gloom — keep the lighting "
-    "bright and warm per the mood rule above no matter how dynamic the shot "
-    "is.\n"
-    "  Example: concept 'you plan external actions, not who to become' -> "
-    "bright three-quarter shot of the wolf on a sunlit balcony crowded with "
-    "potted plants, a handwritten to-do list in one hand held up next to a "
-    "small mirror propped on the railing, warm morning light, city rooftops "
-    "visible behind him\n"
-    "  Example: concept 'you're not that person yet' -> the wolf standing "
-    "at a sunny street-corner newsstand, holding up two different jackets "
-    "side by side as if choosing who to be, warm golden light, a busy "
-    "sunlit street blurred behind him\n"
-    "  Example: concept 'become the person who deserves that success' -> "
-    "low-angle shot of the wolf mid-rep with a barbell in a sunlit gym, a "
-    "torn-up old list crumpled on the floor beside his gym bag, warm "
-    "daylight through big windows, other equipment softly blurred behind "
-    "him\n"
-    "  Example: concept 'stop mapping what to do, start mapping who to "
-    "become' -> shot through a car windshield of the wolf driving with one "
-    "hand, a hand-drawn outline of a person clipped to the sun visor above "
-    "him, bright daylight, a sunlit street blurred in motion outside the "
-    "glass\n"
-    "NEVER DEPICT (image_prompts only — a SEPARATE blacklist from the one "
-    "above, since there is no human figure here): no skull, skeleton, or "
-    "death imagery of any kind; no cigarettes, alcohol, drugs, or vices; no "
-    "slumped or defeated posture, no dark/gloomy/night-dominant scenes (see "
-    "mood rule above); no legible text, signage, or typography anywhere in "
-    "the image (captions are composited separately at render time — baked-"
-    "in text would clash) — a prop that IS a list or a mirror is fine, "
-    "readable words/labels on it are not; no violence or gore; no crowds or "
-    "extra figures of any kind (a busy street/market as a BACKDROP is fine — "
-    "the wolf must remain the only clearly-rendered figure).\n"
-    "Each of the 4 prompts must be one self-contained, vivid sentence "
-    "describing the scene, the wolf's action/posture with its literal prop, "
-    "the setting, the camera angle, and the bright/warm lighting — written "
-    "as a full image-generation prompt, not a short search query.\n\n"
-    "SEARCH_QUERIES — exactly 5 Pexels PHOTO search queries, one per slide IN "
-    "ORDER. Each photo must ILLUSTRATE its slide's specific message — the viewer "
-    "should feel the connection between the words on the slide and the image "
-    "behind them:\n"
-    "  [0] cover — visual that matches the hook's energy and stakes. Must convey "
-    "the hook's CONCEPT, not just be dramatic.\n"
-    "  [1] insight 1 — scene that ILLUSTRATES this specific insight. Ask: what "
-    "real-world scene IS this insight? A person in what situation, doing what?\n"
-    "  [2] insight 2 — same rule: find the scene that makes this insight VISIBLE.\n"
-    "  [3] insight 3 — same rule.\n"
-    "  [4] quote — a scene that embodies what the quote SAYS, not just its mood.\n"
-    "COVER SLIDE PRIORITY: search_queries[0] is the MOST IMPORTANT — it becomes "
-    "the Instagram grid thumbnail. It MUST be visually dramatic at 1:1 crop: high "
-    "contrast, clear subject, no busy detail. Default to TIER 1 scenes (lone MALE "
-    "figure against vast landscape, male silhouette at sunrise/sunset) unless the "
-    "content specifically demands otherwise. Dramatic solitary landscape outperforms "
-    "warm interior by 14x on Instagram grid — bias the cover hard toward TIER 1.\n"
-    "MALE-ONLY RULE: All human subjects across ALL 5 slide photos must be MALE. "
-    "No female figures anywhere in the carousel.\n"
-    "Rules for every query:\n"
-    "  - Describe a REAL SCENE a stock photographer actually shot (person walking "
-    "foggy path, man looking at big-city skyline from rooftop, runner at dawn, "
-    "figure walking beach shoreline, person walking through city crowd, musician "
-    "playing guitar warm light, hands writing in notebook — specific and physical).\n"
-    "  - Do NOT use abstract concepts as queries (no \"success\", \"ambition\", "
-    "\"clarity\", \"mindset\" — these return generic stock photos).\n"
-    "  - 2-4 words max, portrait-friendly composition preferred.\n"
-    "  - All 5 visually distinct — no two should return the same type of scene.\n"
-    "  - PALETTE: All 5 search_queries must share the same single tonal palette "
-    "chosen for the video (see VIDEO_QUERIES rule 8). Slide photos and video clips "
-    "must feel like one body of work, not five different accounts. Apply the SAME "
-    "two hard requirements as rule 8: APPEND the palette's lighting treatment "
-    "word to EVERY query, and NEVER pick a scene whose real-world light fights the "
-    "palette (no fog/overcast/night/dusk under a warm palette, etc.).\n\n"
-    "VIDEO_QUERIES — you are a DOCUMENTARY FILM EDITOR choosing B-roll that "
-    "ILLUSTRATES what the speaker is saying. Every shot must visually reinforce "
-    "the specific idea spoken in that quarter of the clip — the footage IS the "
-    "storytelling, not decoration. A viewer watching on mute must be able to "
-    "GUESS the topic from the footage alone.\n"
-    "Produce EXACTLY 5 beats: 4 primary beats that map IN ORDER to the 4 quarters "
-    "of the clip window, PLUS a 5th SPARE backup (distinct scene, same tone) used "
-    "only if a primary clip can't be sourced.\n\n"
-    "═══ STEP 1 — CONTENT ANALYSIS (MANDATORY — DO THIS BEFORE ANYTHING ELSE) ═══\n"
-    "Divide the clip window into 4 roughly equal time quarters. For EACH quarter, "
-    "write one plain sentence describing the SPECIFIC concept, idea, or action the "
-    "speaker is expressing in those seconds. Do NOT skip to scene selection. You "
-    "cannot choose a scene until you have named each quarter's specific content.\n"
-    "  Q1: What problem, behavior, or situation is being introduced?\n"
-    "  Q2: What is the mechanism, tension, or WHY it matters?\n"
-    "  Q3: What is the insight, reframe, or turning point?\n"
-    "  Q4: What is the payoff, resolution, or call to action?\n\n"
-    "═══ STEP 2 — SCENE SELECTION (derived from content, not from a list) ═══\n"
-    "For each quarter, ask: 'What real-world scene visually MEANS the same thing "
-    "as the concept I identified in STEP 1?' The scene subject MUST come from the "
-    "spoken content — not from a preset list of generic shots.\n"
-    "  BAD (generic, could go under ANY motivational clip):\n"
-    "    Concept 'you avoid difficult choices' → 'lone figure mountain sunrise' "
-    "(decorative, says nothing about avoidance or choice)\n"
-    "    Concept 'brain creates fake scenarios' → 'mountain lake mist' "
-    "(pretty but semantically unrelated to brain/scenarios)\n"
-    "    Concept 'consequences come later' → 'cliff edge silhouette' "
-    "(generic dramatic, no connection to future consequences)\n"
-    "  GOOD (scene subject IS the concept):\n"
-    "    Concept 'you keep choosing the easier path' → 'figure standing at fork "
-    "in road golden hour' (two visible paths = the choice moment is filmable)\n"
-    "    Concept 'the pain comes later anyway' → 'person walking alone into open "
-    "horizon dusk' (moving toward unknown future = consequences ahead)\n"
-    "    Concept 'brain creates fake scenarios' → 'man standing motionless as "
-    "storm clouds race overhead' (frozen in your head while the world moves — "
-    "NEVER use a crowd or second person to show 'world moving'; use weather, "
-    "light, or motion blur in the environment instead)\n"
-    "    Concept 'discipline is freedom' → 'runner on open empty road at dawn' "
-    "(chosen effort, unrestricted horizon ahead)\n"
-    "    Concept 'you suppress who you are' → 'person walking away open door light' "
-    "(stepping OUT of confinement = aspirational counterpart of suppression)\n"
-    "    Concept 'stand in your truth' → 'lone figure mountain summit sunrise' "
-    "(standing tall, exposed, unafraid = owning your conviction)\n\n"
-    "═══ STEP 3 — PALETTE (lighting/mood modifier applied after scenes are chosen) ═══\n"
-    "After scenes are selected from content, apply ONE palette as a lighting and "
-    "mood modifier. The palette does NOT change the scene subject — only light "
-    "quality and color temperature:\n"
-    "  - DRAMATIC-NATURAL: golden hour, dawn, dusk, storm light, high contrast. "
-    "DEFAULT — use unless content demands otherwise.\n"
-    "  - COOL-CINEMATIC: blue hour, urban night, rain. Use for modern-life or "
-    "culture-critique content.\n"
-    "  - WARM-INTERIOR: lamplight, morning window. Use ONLY for "
-    "contemplation/writing/reading content.\n"
-    "APPEND the palette's treatment word to EVERY query. Do NOT pick a scene "
-    "whose real-world light fights the palette.\n\n"
-    "VISUAL QUALITY TIERS (how to FRAME the scene — NOT a scene shopping list; "
-    "scene subjects always come from STEP 1 content first. ALL subjects are "
-    "EXACTLY ONE MALE FIGURE, always alone, never a second person of any kind "
-    "in frame — this is the single most important rule in this section):\n"
-    "TIER 1 — TRAINING / PHYSICAL EFFORT (highest impact, serious, earned): one "
-    "man training alone at dawn — push-ups on a big-city skyline rooftop, "
-    "pull-ups on a bar, punching a bag, lifting weights in an empty gym, a hard "
-    "sprint or trail run on an empty road. Must feel earned and serious — never "
-    "recreational.\n"
-    "TIER 2 — WORK / DISCIPLINE / REFLECTION (purposeful, introspective): one "
-    "man working — at a laptop or workshop bench under a single lamp, writing "
-    "down goals or journaling with intensity at a desk, meditating alone in "
-    "stillness (seated upright, eyes closed, one figure only), walking "
-    "purposefully through a city street at dawn (going somewhere, not "
-    "strolling), sitting alone in focused thought by a window or on a big-city "
-    "skyline rooftop.\n"
-    "TIER 3 — AVOID: beach walks, coastal strolls, vacation scenery, coffee "
-    "shops, lifestyle interiors, anyone who looks like they are relaxing, and "
-    "ANY shot with a second person, couple, group, or crowd regardless of tier.\n\n"
-    "RULES:\n"
-    "1. CONTENT-FIRST (NON-NEGOTIABLE): Every beat's scene subject must come "
-    "directly from the specific concept named in STEP 1. If the same query could "
-    "appear under ANY motivational clip regardless of what the speaker said, it is "
-    "too generic — rewrite it to be concept-specific.\n"
-    '2. No proper nouns, brand names, or place names.\n'
-    "3. TONAL CONSISTENCY: All 4 primary beats + spare share the chosen palette — "
-    "same season, lighting direction, color temperature. APPEND the palette's "
-    "treatment word to EVERY query. All 5 keywords distinct, all 5 queries distinct.\n"
-    "4. ASPIRATIONAL ONLY: When content describes a negative (avoiding, fearing, "
-    "giving up), show the positive counterpart — never the failure-state, never a "
-    "defeated or slumped subject.\n"
-    "5. SUBJECTS: calm and inward, never performative. No grinning at camera, "
-    "gesturing theatrically, or mid-laugh. Quiet determination.\n"
-    "6. NO legible on-screen TEXT in footage.\n"
-    "7. KEYWORD: aspirational or neutral — NEVER negative (overwhelm, fear, anxiety, "
-    "defeat). Use the counterpart: clarity, momentum, stillness, resolve, conviction.\n"
-    "8. SAFE-SCENE FALLBACK: For abstract concepts with no filmable scene, fall back "
-    "to one of these MALE, serious defaults: man doing push-ups at dawn on empty "
-    "surface, man standing at big-city skyline rooftop edge at sunrise looking out, "
-    "man walking alone on empty road in morning mist, man writing intensely at a "
-    "desk under a lamp. NEVER fall back to a beach walk or coastal stroll. "
-    "LIMIT: AT MOST ONE fallback per clip. If 2+ beats need a fallback, revisit "
-    "STEP 1 — your content analysis was too vague.\n"
-    "9. SELF-CHECK: Read back all 4 primary queries. For each ask: 'Does this shot "
-    "SPECIFICALLY illustrate the concept spoken in that quarter, or is it a generic "
-    "landscape that could go under any clip?' More than one generic query = rewrite.\n"
-    '10. Format: {"keyword": "one emotion word", "query": "filmable scene treatment"}\n'
-    "Example — clip about 'you always choose easy now and pay the price later':\n"
-    "STEP 1 content analysis:\n"
-    "  Q1 (you keep picking the comfortable option): concept = avoiding the harder path\n"
-    "  Q2 (the pain comes either way): concept = future consequences are unavoidable\n"
-    "  Q3 (choose your hard intentionally): concept = deliberate difficult forward motion\n"
-    "  Q4 (the reward is on the other side): concept = earned open horizon\n"
-    "DRAMATIC-NATURAL palette:\n"
-    '[{"keyword": "choice", "query": "figure standing fork in road golden hour"}, '
-    '{"keyword": "consequence", "query": "person walking alone open horizon dusk"}, '
-    '{"keyword": "resolve", "query": "runner uphill empty road dawn"}, '
-    '{"keyword": "freedom", "query": "person arms open cliff edge sunrise"}, '
-    '{"keyword": "clarity", "query": "lone figure mountain summit golden hour"}]\n'
-    "Each query is derived from its quarter's specific concept — not from a list.\n\n"
+    '  "wolf_outfit"  : string — ONE outfit for the illustrated wolf character, '
+    "worn unchanged in every scene of this clip. See the IMAGE_SCENES rules below.\n"
+    f'  "image_scenes" : array of exactly {config.IMAGE_PROMPT_COUNT} OBJECTS — '
+    "structured scene directions for the clip's illustrated background images, "
+    'each {"beat", "concept", "action", "setting", "camera"}. See the '
+    "IMAGE_SCENES art-direction rules below.\n\n"
+    f"IMAGE_SCENES — {config.IMAGE_PROMPT_COUNT} structured scene directions "
+    "for the clip's illustrated background images. You write the CONTENT of "
+    "each scene ONLY — the locked visual style (a vintage halftone comic-book "
+    "illustration of ONE anthropomorphic wolf character in a warm, bright "
+    "palette) is appended in code afterwards and is NOT yours to describe or "
+    "vary. Never mention art style, palette, lighting quality, or the wolf's "
+    "species/appearance in your fields — only what happens, where, and how "
+    "it is framed.\n\n"
+    "STEP 1 — CONTENT ANALYSIS (MANDATORY, do this before writing any "
+    "scene): divide the clip window into 4 roughly equal time quarters. For "
+    "EACH quarter, name in one plain sentence the SPECIFIC concept, claim, "
+    "or action the speaker expresses in those seconds:\n"
+    "  Q1: the problem, behavior, or situation being introduced.\n"
+    "  Q2: the mechanism, tension, or why it matters.\n"
+    "  Q3: the insight, reframe, or turning point.\n"
+    "  Q4: the payoff, resolution, or call to action.\n\n"
+    f"STEP 2 — {config.IMAGE_PROMPT_COUNT} SCENES, ONE STORY ARC. The scenes "
+    "form a single visual story that mirrors the speech, mapped IN ORDER "
+    'with these exact "beat" values: '
+    f"{json.dumps(config.IMAGE_SCENE_BEATS)}.\n"
+    "  Scenes 1-2 (problem): the wolf FACING Q1's specific problem — two "
+    "DIFFERENT settings and camera angles on the same struggle.\n"
+    "  Scene 3 (stakes): Q2 made visible — the weight, cost, or mechanism "
+    "of the problem.\n"
+    "  Scene 4 (reframe): Q3's turning point — the moment the new lens "
+    "lands.\n"
+    "  Scenes 5-6 (payoff): Q4 lived out — first in action, then resolved "
+    "and forward-looking.\n"
+    "ARC TENSION RULE: scenes 1-3 may show confrontation and tension — the "
+    "wolf looks AT the problem, upright, jaw set, determined. NEVER "
+    "slumped, defeated, head-in-hands, or despairing: the tension lives in "
+    "the SCENE (the prop, the stakes), never in a broken posture.\n\n"
+    "Each scene object has exactly these keys:\n"
+    '  "beat"    : string — the fixed value for its position (sequence '
+    "above).\n"
+    '  "concept" : string — one plain sentence: the specific idea from '
+    "STEP 1 this scene illustrates. Quote the quarter's actual idea, not a "
+    "vague mood.\n"
+    '  "action"  : string — what the wolf is physically DOING, including a '
+    "LITERAL PROP: identify the exact thing said in that quarter (a to-do "
+    "list, a choice between two objects, a clock, money, a mirror, a "
+    "phone, whatever it actually is) and put a concrete visual stand-in "
+    "for THAT THING in the wolf's hands or actions. A viewer on mute "
+    "should guess the topic from the image alone — a generic mood action "
+    "with no concrete link to that quarter's words is a FAILURE.\n"
+    '  "setting" : string — where it happens. VARY ACROSS ALL SCENES: '
+    "never the same setting twice in one clip; lean OUT-IN-THE-WORLD (gym, "
+    "busy sunlit street, riding in/driving a car, rooftop with a modern "
+    "big-city skyline, market, park bench, garage or workshop, balcony "
+    "with plants, bus stop, laundromat) over domestic — home settings "
+    "(couch, kitchen, desk, doorway) at most once per clip. Pick whichever "
+    "place makes the action make sense.\n"
+    '  "camera"  : string — dynamic film-still framing: low or high angle, '
+    "three-quarter view, through a car windshield or window, tracking "
+    "alongside a moving subject, strong foreground/background depth, "
+    "purposeful motion (wind, motion blur) where the scene calls for it.\n"
+    "  Example scene (concept 'you plan external actions, not who to "
+    "become'): {\"beat\": \"problem\", \"concept\": \"you plan all the "
+    "external things to do, but never who to become\", \"action\": "
+    "\"holding up a long handwritten to-do list next to a small mirror, "
+    "eyes moving between the two\", \"setting\": \"a sunlit balcony "
+    "crowded with potted plants, city rooftops behind\", \"camera\": "
+    "\"bright three-quarter shot, list and mirror large in the "
+    "foreground\"}\n\n"
+    'WOLF_OUTFIT: also emit "wolf_outfit" — ONE outfit of ordinary human '
+    "clothes that plausibly works in ALL of this clip's settings (e.g. 'a "
+    "rust-orange hoodie, dark jeans and white sneakers'). It is worn "
+    "UNCHANGED in every scene so the images read as one character's story. "
+    "No logos, no readable text on the clothing.\n"
+    "NEVER DEPICT (image scenes hard blacklist): no "
+    "skull, skeleton, or death imagery; no cigarettes, alcohol, drugs, or "
+    "vices; no slumped or defeated posture; no violence or gore; no crowds "
+    "or extra figures of any kind (a busy street/market as an anonymous "
+    "BACKDROP is fine — the wolf must remain the only clearly-rendered "
+    "figure); no props with readable words (a prop may BE a list, sign, or "
+    "book, but never with legible writing — the captions are composited "
+    "separately at render time and baked-in text would clash).\n\n"
     "You are given the transcript excerpt for the already-chosen clip window "
     "below, plus a short note on why this segment was chosen (what it exposes, "
     "its reframe, and its payoff) for context only — you do not choose or adjust "
@@ -652,90 +427,55 @@ def _strip_to_json(text: str) -> str:
     return text
 
 
-def _normalize_query_list(data: dict, key: str, target: int) -> None:
-    """Coerce ``data[key]`` to EXACTLY ``target`` non-empty query strings (in place).
+_SCENE_TEXT_KEYS = ("concept", "action", "setting", "camera")
 
-    Drops blanks and extras (truncate) and pads by cycling the real queries when
-    the model returns too few. Logs a warning whenever it adjusts the count so a
-    stray count never crashes the pipeline. Only raises if there is nothing at
-    all to derive a list from.
+
+def _normalize_image_scenes(data: dict) -> None:
+    """Coerce ``data['image_scenes']`` to EXACTLY ``config.IMAGE_PROMPT_COUNT``
+    usable scene objects (in place) and stamp the fixed beat sequence.
+
+    A scene is usable when ``concept``, ``action``, and ``setting`` are all
+    non-empty strings; ``camera`` gets a sane default when blank. Extras are
+    truncated (warned); too few usable scenes raises so the retry wrapper
+    re-extracts — padding would duplicate images on screen. Beats are always
+    OVERWRITTEN with ``config.IMAGE_SCENE_BEATS`` (position defines the story
+    arc; a model-mislabeled beat is corrected, never fatal).
     """
-    queries = [q.strip() for q in data[key] if isinstance(q, str) and q.strip()]
-    if not queries:
-        raise ValueError(f"{key!r} must contain at least one non-empty string")
-    if len(queries) != target:
-        logger.warning(
-            "%s count %d != %d; normalizing to %d (truncating extras / "
-            "duplicating to fill)",
-            key, len(queries), target, target,
-        )
-        if len(queries) > target:
-            queries = queries[:target]
-        else:
-            base = list(queries)
-            i = 0
-            while len(queries) < target:
-                queries.append(base[i % len(base)])
-                i += 1
-    data[key] = queries
-
-
-def _normalize_video_queries(data: dict, target: int) -> None:
-    """Coerce ``data['video_queries']`` to EXACTLY ``target`` {keyword, query} objects.
-
-    Each item is normalized to ``{"keyword": str, "query": str}``. Accepts a bare
-    string from a model that ignored the object format (keyword left blank).
-    Drops entries with an empty query, then de-duplicates so all keywords are
-    distinct AND all queries are distinct (case-insensitive, first wins). Extras
-    are truncated. If de-dup leaves fewer than ``target``, pads by cycling the
-    surviving objects (last resort) — the Pexels-level dedup in pexels_bg still
-    keeps the actual CLIPS distinct even when two queries coincide. Warns on any
-    adjustment; only raises if there is nothing usable at all.
-    """
-    raw = data.get("video_queries") or []
-
+    target = config.IMAGE_PROMPT_COUNT
     cleaned: list[dict] = []
-    seen_keywords: set[str] = set()
-    seen_queries: set[str] = set()
-    for item in raw:
-        if isinstance(item, dict):
-            keyword = str(item.get("keyword") or "").strip()
-            query = str(item.get("query") or "").strip()
-        elif isinstance(item, str):
-            keyword, query = "", item.strip()
-        else:
+    for item in data.get("image_scenes") or []:
+        if not isinstance(item, dict):
             continue
-        if not query:
+        scene = {k: str(item.get(k) or "").strip() for k in _SCENE_TEXT_KEYS}
+        if not (scene["concept"] and scene["action"] and scene["setting"]):
             continue
-        # Distinct keywords AND distinct queries (case-insensitive).
-        qk = query.lower()
-        kk = keyword.lower()
-        if qk in seen_queries or (kk and kk in seen_keywords):
-            continue
-        seen_queries.add(qk)
-        if kk:
-            seen_keywords.add(kk)
-        cleaned.append({"keyword": keyword, "query": query})
+        scene["camera"] = scene["camera"] or "dynamic three-quarter view with strong depth"
+        scene["beat"] = str(item.get("beat") or "").strip().lower()
+        cleaned.append(scene)
 
-    if not cleaned:
-        raise ValueError("'video_queries' must contain at least one usable {keyword, query}")
-
-    if len(cleaned) != target:
-        logger.warning(
-            "video_queries count %d != %d after de-dup; normalizing to %d "
-            "(truncating extras / cycling to fill — clips stay distinct via Pexels dedup)",
-            len(cleaned), target, target,
+    if len(cleaned) < target:
+        raise ValueError(
+            f"'image_scenes' must contain {target} usable scene objects "
+            f"(concept/action/setting all non-empty), got {len(cleaned)}"
         )
-        if len(cleaned) > target:
-            cleaned = cleaned[:target]
-        else:
-            base = list(cleaned)
-            i = 0
-            while len(cleaned) < target:
-                cleaned.append(base[i % len(base)])
-                i += 1
+    if len(cleaned) > target:
+        logger.warning("image_scenes count %d > %d; truncating extras", len(cleaned), target)
+        cleaned = cleaned[:target]
 
-    data["video_queries"] = cleaned
+    for i, scene in enumerate(cleaned):
+        expected = config.IMAGE_SCENE_BEATS[i]
+        if scene["beat"] != expected:
+            logger.warning(
+                "image_scenes[%d] beat %r != expected %r; correcting", i, scene["beat"], expected
+            )
+            scene["beat"] = expected
+
+    data["image_scenes"] = cleaned
+
+    outfit = str(data.get("wolf_outfit") or "").strip()
+    if not outfit:
+        logger.warning("wolf_outfit missing/empty; image_gen will use its default outfit")
+    data["wolf_outfit"] = outfit
 
 
 # Deterministic backstop for the NEVER DEPICT rules in SYSTEM_PROMPT. The model
@@ -769,8 +509,10 @@ _BANNED_SCENE_PHRASES = (
 def _scene_safety_gate(data: dict) -> None:
     """Raise ValueError if any generated query violates the single-male-subject /
     no-crowd rule, so the retry wrapper re-extracts instead of silently shipping
-    off-brand footage. Checks ``search_queries`` (strings) and ``video_queries``
-    (``{keyword, query}`` objects) — the only two fields that ever reach Pexels.
+    off-brand imagery. Checks the VISUAL fields of ``image_scenes``
+    (``action``/``setting`` — the wolf must stay alone; ``concept`` is
+    deliberately NOT scanned since it restates the speech, which may
+    legitimately mention people).
     """
     offenders: list[str] = []
 
@@ -779,18 +521,16 @@ def _scene_safety_gate(data: dict) -> None:
         if _BANNED_SCENE_WORDS.search(low) or any(p in low for p in _BANNED_SCENE_PHRASES):
             offenders.append(text)
 
-    for q in data.get("search_queries", []):
-        if isinstance(q, str):
-            _check(q)
-    for item in data.get("video_queries", []):
-        if isinstance(item, dict):
-            _check(str(item.get("query") or ""))
+    for scene in data.get("image_scenes", []):
+        if isinstance(scene, dict):
+            _check(str(scene.get("action") or ""))
+            _check(str(scene.get("setting") or ""))
 
     if offenders:
         raise ValueError(
-            "SCENE SAFETY GATE — one or more queries would surface a banned "
-            f"scene (crowd/group/multi-person/female subject): {offenders!r}. "
-            "Every query must depict exactly one male subject, alone."
+            "SCENE SAFETY GATE — one or more image scenes describe a banned "
+            f"subject (crowd/group/multi-person/female figure): {offenders!r}. "
+            "Every scene must depict the wolf character alone."
         )
 
 
@@ -804,9 +544,7 @@ def _validate(data: dict) -> None:
         "clip_start": (int, float),
         "clip_end": (int, float),
         "hashtags": list,
-        "image_prompts": list,
-        "search_queries": list,
-        "video_queries": list,
+        "image_scenes": list,
     }
     for key, expected_type in required.items():
         if key not in data:
@@ -820,21 +558,11 @@ def _validate(data: dict) -> None:
     if len(data["insights"]) != 3:
         raise ValueError(f"'insights' must have exactly 3 items, got {len(data['insights'])}")
 
-    if len(data["image_prompts"]) != config.IMAGE_PROMPT_COUNT:
-        raise ValueError(
-            f"'image_prompts' must have exactly {config.IMAGE_PROMPT_COUNT} items, "
-            f"got {len(data['image_prompts'])}"
-        )
-    if not all(isinstance(p, str) and p.strip() for p in data["image_prompts"]):
-        raise ValueError("'image_prompts' must be non-empty strings")
-
-    # Normalize the query lists to their EXACT expected counts. Each downstream
-    # consumer needs a fixed count (slides = one photo query per slide; the video
-    # = one stock-video query per background slot), but a stray count from the
-    # model must never crash the pipeline: drop blanks/extras, and pad by cycling
-    # the real queries if too few.
-    _normalize_query_list(data, "search_queries", config.SEARCH_QUERY_COUNT)
-    _normalize_video_queries(data, config.VIDEO_QUERY_EXTRACT_COUNT)
+    # Normalize image_scenes to the EXACT expected count (one image per scene,
+    # 6 background slots + all 6 slide backgrounds). Blanks/extras are dropped,
+    # but a scene shortfall raises (padding would duplicate images on screen)
+    # so the retry wrapper re-extracts.
+    _normalize_image_scenes(data)
     _scene_safety_gate(data)
 
     window = data["clip_end"] - data["clip_start"]
@@ -1388,9 +1116,13 @@ def extract_copy_for_window(
     ``clip_start``/``clip_end`` are FIXED inputs, not chosen here. ``seed`` is
     the approved candidate dict (``hook``/``exposes``/``reframe``/``payoff``),
     passed as context so the copy stays anchored to what was approved. Returns
-    the same schema ``extract_highlights`` used to (``hook``, ``insights``,
-    ``best_quote``, ``title``, ``clip_start``, ``clip_end``, ``hashtags``,
-    ``image_prompts``, ``search_queries``, ``video_queries``).
+    ``hook``, ``insights``, ``best_quote``, ``title``, ``clip_start``,
+    ``clip_end``, ``hashtags``, ``wolf_outfit``, and ``image_scenes``
+    (structured scene specs — image_gen composes the final prompts from its
+    locked style template; the same images now also back the slide deck).
+    (``image_prompts``/``video_queries``/``search_queries`` were removed from
+    the schema 2026-07-31; old cached plans still carrying them render fine
+    via the background.py / slide_gen fallbacks.)
 
     Runs ``_validate`` (schema/count checks — the window itself was already
     vetted by ``filter_candidates``, so its bounds check always passes here;
