@@ -3,15 +3,21 @@
 Renders a 6-slide Instagram carousel (1080x1350) for a short-form clip:
     COVER (hook) -> INSIGHT 01/02/03 -> QUOTE -> FOLLOW (CTA)
 
+Every slide is backed by one of the clip's generated wolf images (passed in as
+``photo_paths`` from the render — the same 6-image story-arc set the video
+uses), cover-cropped full-bleed with a dark scrim over the text band. Without
+``photo_paths`` (e.g. the ``__main__`` harness) slides render on the solid
+dark background. The old Pexels stock-photo path was deleted 2026-07-31 along
+with ``search_queries``.
+
 Shared design system (see the constants block): dark #0D0D12 canvas, a yellow
 accent, near-white left-anchored body, a persistent footer (wordmark + 6
 progress dots), DejaVu Sans Bold for body and DejaVu Serif Bold for the giant
 ghosted insight numbers. Body text auto-fits (shrink + re-wrap) into the safe
 area between the eyebrow and the footer so short and long insights both fit.
-The closing FOLLOW slide is a solid-background CTA (no photo query spent on it).
 
-Public contract is unchanged: ``build_slides(highlights) -> list[str]`` returns
-the 6 ordered PNG paths (consumed by main.py).
+Public contract: ``build_slides(highlights, photo_paths=...) -> list[str]``
+returns the 6 ordered PNG paths (consumed by main.py).
 """
 
 import logging
@@ -20,7 +26,6 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 
 import config
-from modules import pexels_bg
 
 logger = logging.getLogger(__name__)
 
@@ -377,35 +382,6 @@ def _attribution(highlights: dict) -> str | None:
     return None
 
 
-def _slide_queries(queries: list[str], n_insights: int) -> list[str | None]:
-    """Map ai_extract's search_queries 1:1 onto the slide order.
-
-    ai_extract now emits exactly one art-directed query per slide, in slide
-    order: [0] cover, [1..n] insights, [last] quote. Each slide takes its own
-    query (no cycling); a missing entry stays None so that slide falls back to
-    the solid background.
-    """
-    total = 2 + n_insights
-    queries = [q for q in queries if isinstance(q, str) and q.strip()]
-    return [queries[i] if i < len(queries) else None for i in range(total)]
-
-
-def _fetch_slide_backgrounds(queries: list[str], n_insights: int, force: bool) -> list[str | None]:
-    """Fetch one portrait Pexels photo per slide -> tmp/slide_bg_<query-hash>.jpg.
-
-    Cached by query hash, not slide index, so a new episode's different
-    search_queries fetch fresh photos instead of reusing the prior deck.
-    Degrades per slide: a query that yields nothing (or a Pexels outage) leaves
-    that slide's entry None so it renders on the solid background instead.
-    """
-    os.makedirs(config.TMP_DIR, exist_ok=True)
-    paths: list[str | None] = []
-    for query in _slide_queries(queries, n_insights):
-        cache = os.path.join(config.TMP_DIR, f"slide_bg_{pexels_bg.query_slug(query)}.jpg")
-        paths.append(pexels_bg.fetch_photo(query, cache, force=force) if query else None)
-    return paths
-
-
 def _map_photos_to_slides(photos: list[str], n_insights: int) -> tuple[list[str | None], str | None]:
     """Map the clip's generated background images onto the slide deck.
 
@@ -432,14 +408,12 @@ def build_slides(highlights: dict, force: bool = False, photo_paths: list[str] |
     Order: COVER (hook), INSIGHT 01-03 (insights), QUOTE (best_quote), FOLLOW (CTA).
     Requires keys: hook, insights (>=1, uses up to 3), best_quote.
 
-    ``photo_paths`` (the branded path, since 2026-07-31): the clip's generated
-    wolf background images, passed straight from the video render — video and
-    carousel become one body of work (see :func:`_map_photos_to_slides`; the
-    FOLLOW slide gets an image too). Without ``photo_paths`` (old cached plans,
-    the ``__main__`` harness) the legacy Pexels flow fetches one stock photo
-    per ``search_queries`` entry and the FOLLOW slide stays solid. Either way
-    each slide degrades to the solid dark background when its image is
-    missing. ``force`` re-downloads photos (legacy path only).
+    ``photo_paths``: the clip's generated wolf background images, passed
+    straight from the video render — video and carousel are one body of work
+    (see :func:`_map_photos_to_slides`; the FOLLOW slide gets an image too).
+    Without ``photo_paths`` (e.g. the ``__main__`` harness) every slide renders
+    on the solid dark background; each slide also degrades to solid when its
+    image is missing. ``force`` is accepted for back-compat and unused.
     """
     os.makedirs(config.SLIDE_DIR, exist_ok=True)
 
@@ -450,12 +424,11 @@ def build_slides(highlights: dict, force: bool = False, photo_paths: list[str] |
         raise ValueError("highlights needs hook, insights, and best_quote to build the deck")
 
     insights = insights[:3]
+    bgs, follow_bg = _map_photos_to_slides(photo_paths or [], len(insights))
     if photo_paths:
-        bgs, follow_bg = _map_photos_to_slides(photo_paths, len(insights))
         logger.info("Slide backgrounds: %d generated wolf image(s) (branded deck)", len(photo_paths))
     else:
-        bgs = _fetch_slide_backgrounds(highlights.get("search_queries") or [], len(insights), force)
-        follow_bg = None
+        logger.info("Slide backgrounds: none passed; rendering on solid background")
 
     paths: list[str] = []
 
@@ -491,12 +464,6 @@ SAMPLE_HIGHLIGHTS = {
     "clip_start": 2355,
     "clip_end": 2415,
     "hashtags": ["#MindsetMentor", "#NervousSystem", "#DigitalDetox"],
-    "search_queries": [
-        "person sitting alone sunset",
-        "city crowd phone screens",
-        "reading book natural light",
-        "solo forest walk morning",
-    ],
 }
 
 

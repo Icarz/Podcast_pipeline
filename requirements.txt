@@ -3,10 +3,6 @@ groq
 anthropic
 moviepy
 Pillow
-boto3
-google-api-python-client
-google-auth-oauthlib
 requests
 python-dotenv
 feedparser
-opencv-python-headless  # bg_quality face/text checks (optional at runtime — gate degrades to brightness-only without it)

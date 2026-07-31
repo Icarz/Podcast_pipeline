@@ -1,20 +1,20 @@
 """Podcast automation pipeline orchestrator.
 
-End-to-end flow for the latest episode of a feed:
+End-to-end flow for an episode of a feed:
     RSS ingest -> transcribe -> AI extract -> background select
     -> video render (karaoke MP4) -> slide deck (PNGs)
 
-After rendering, the publish stage is resilient and best-effort:
-    R2 upload (video + slides) -> YouTube Short (default private)
-    -> Instagram + TikTok logged as MANUAL POST reminders.
-A failure in R2 or YouTube is logged but never crashes the run or discards
-the already-rendered video/slides. Instagram is NOT auto-published (the Meta
-flow is a NotImplementedError scaffold) — we only log the file paths/URLs.
+Publishing is fully MANUAL by design (2026-07-31): the user uploads the Short
+and posts the carousel by hand, so the run ends with a manual-post checklist
+of local file paths — no YouTube/Meta/R2 API calls (those modules were
+deleted; see git history if ever needed again).
 
 Run:
     .\\venv\\Scripts\\python.exe main.py mindset_mentor   # feed key
     .\\venv\\Scripts\\python.exe main.py https://...rss    # or a raw RSS URL
     .\\venv\\Scripts\\python.exe main.py --url https://...mp3 --title "..."  # direct audio, no RSS
+    .\\venv\\Scripts\\python.exe main.py <feed> --scan     # bank Stage-1 candidates
+    .\\venv\\Scripts\\python.exe main.py --bank            # review the bank + render
 
 Re-runs reuse the tmp/<basename>.plan.json cache that this module (and the
 video_gen harness) writes, so Groq/Claude are only hit once per episode.
@@ -37,18 +37,12 @@ from modules import (
     posted_history,
     rss_ingest,
     slide_gen,
-    storage,
     transcribe,
     video_gen,
-    youtube_publish,
 )
 
 # Mon=0 .. Sun=6 (matches date.weekday() and config.ROTATION keys).
 _WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-# NOTE: instagram_publish is deliberately NOT imported — its Meta Graph flow is
-# still a NotImplementedError scaffold, so Instagram/TikTok are handled as
-# MANUAL POST log reminders rather than real API calls (see _publish_stage).
 
 load_dotenv()
 
@@ -209,87 +203,20 @@ def _pick_episode_and_candidate(feed_arg: str, interactive: bool = True) -> tupl
         return episode, transcript, candidate
 
 
-def _publish_stage(
-    episode: dict,
-    highlights: dict,
-    video_path: str,
-    slides: list[str],
-    privacy_status: str = "private",
-) -> dict:
-    """Best-effort publish: R2 upload -> YouTube -> manual-post reminders.
-
-    The content already rendered successfully by the time we get here, so every
-    external step is wrapped: a failure is logged clearly but NEVER raised, so a
-    flaky upload can't throw away the generated video/slides. Returns a dict of
-    everything we managed to do (URLs and/or per-step error strings) for the
-    end-of-run summary.
-
-    ``privacy_status`` is forwarded to YouTube (defaults to ``"private"`` so a
-    test run never goes public — flip to ``"public"`` manually after review).
-    """
-    result: dict = {
-        "video_url": None,
-        "slide_urls": [],
-        "youtube_url": None,
-        "r2_error": None,
-        "youtube_error": None,
-        "privacy_status": privacy_status,
-    }
-
-    # --- 1) R2 upload: video first, then each slide. -----------------------
-    logger.info("[publish] R2: upload video + %d slide(s)", len(slides))
-    try:
-        result["video_url"] = storage.upload(video_path)
-        logger.info("[publish] R2 video URL: %s", result["video_url"])
-        for i, slide_path in enumerate(slides, 1):
-            slide_url = storage.upload(slide_path)
-            result["slide_urls"].append(slide_url)
-            logger.info("[publish] R2 slide %d URL: %s", i, slide_url)
-    except Exception as exc:  # noqa: BLE001 - publish must never crash the run
-        result["r2_error"] = str(exc)
-        logger.exception("[publish] R2 upload FAILED (continuing): %s", exc)
-
-    # --- 2) YouTube Short (private by default). ----------------------------
-    logger.info("[publish] YouTube: upload Short (%s)", privacy_status)
-    try:
-        result["youtube_url"] = youtube_publish.publish(
-            video_path, episode, highlights, privacy_status=privacy_status
-        )
-        logger.info("[publish] YouTube URL: %s", result["youtube_url"])
-    except Exception as exc:  # noqa: BLE001 - publish must never crash the run
-        result["youtube_error"] = str(exc)
-        logger.exception("[publish] YouTube upload FAILED (continuing): %s", exc)
-
-    # --- 3) Instagram: NO API call — log a MANUAL POST reminder. -----------
-    ig_lines = [
-        "[publish] MANUAL POST — Instagram (post by hand):",
-        f"            Reel video (local) : {video_path}",
+def _log_manual_post(video_path: str, slides: list[str]) -> None:
+    """Log the manual-post checklist — publishing is fully by hand by design."""
+    lines = [
+        "MANUAL POST (all platforms, by hand):",
+        f"  Short/Reel video : {video_path}",
+        f"  Carousel slides ({len(slides)}):",
     ]
-    if result["video_url"]:
-        ig_lines.append(f"            Reel video (R2)    : {result['video_url']}")
-    ig_lines.append(f"            Carousel slides ({len(slides)}):")
-    for i, slide_path in enumerate(slides, 1):
-        ig_lines.append(f"              {i}. local: {slide_path}")
-        if i - 1 < len(result["slide_urls"]):
-            ig_lines.append(f"                 R2   : {result['slide_urls'][i - 1]}")
-    logger.warning("\n".join(ig_lines))
-
-    # --- 4) TikTok: NO API call — log a MANUAL POST reminder. --------------
-    tt_lines = [
-        "[publish] MANUAL POST — TikTok (post by hand):",
-        f"            Video (local) : {video_path}",
-    ]
-    if result["video_url"]:
-        tt_lines.append(f"            Video (R2)    : {result['video_url']}")
-    logger.warning("\n".join(tt_lines))
-
-    return result
+    lines += [f"    {i}. {p}" for i, p in enumerate(slides, 1)]
+    logger.info("\n".join(lines))
 
 
 def run(
     feed_arg: str,
     episode: dict | None = None,
-    privacy_status: str = "private",
     render_slides: bool = True,
     interactive: bool = True,
 ) -> dict:
@@ -313,10 +240,9 @@ def run(
 
     ``interactive=False`` (used by ``run_auto``) disables the human prompt and
     auto-picks the top-ranked surviving candidate at each Stage 1 pass.
-    ``privacy_status`` is forwarded to YouTube (default ``"private"``).
     ``render_slides=False`` skips the carousel deck entirely (video-only run) —
-    ``_publish_stage`` and the summary printer already treat an empty
-    ``slides`` list as a no-op. Returns a summary dict.
+    the summary printer already treats an empty ``slides`` list as a no-op.
+    Returns a summary dict.
     """
     logger.info("Starting pipeline | feed=%s", feed_arg)
 
@@ -380,8 +306,7 @@ def run(
         posted_history.mark_used(guid=guid, feed=feed_arg, title=episode.get("title", ""))
 
     return _render_and_publish(
-        feed_arg, episode, transcript, highlights,
-        privacy_status=privacy_status, render_slides=render_slides,
+        feed_arg, episode, transcript, highlights, render_slides=render_slides,
     )
 
 
@@ -390,11 +315,10 @@ def _render_and_publish(
     episode: dict,
     transcript: dict,
     highlights: dict,
-    privacy_status: str = "private",
     render_slides: bool = True,
     bg_basename: str | None = None,
 ) -> dict:
-    """Steps 4-7 (backgrounds -> video -> slides -> publish) + summary dict.
+    """Steps 4-7 (backgrounds -> video -> slides -> manual-post checklist) + summary dict.
 
     Shared render tail for the classic :func:`run` flow and the --bank flow.
     ``bg_basename`` namespaces the AI-background image cache and defaults to
@@ -437,22 +361,8 @@ def _render_and_publish(
         logger.info("[6/6] Slides: skipped (render_slides=False)")
         slides = []
 
-    # 7) Publish: R2 -> YouTube -> manual reminders (best-effort, never fatal).
-    logger.info("[7/7] Publish: R2 + YouTube + manual reminders")
-    publish = _publish_stage(
-        episode, highlights, video_path, slides, privacy_status=privacy_status
-    )
-
-    # 8) Stamp the YouTube URL on the already-retired episode entry (written at
-    #    render time above). A YouTube failure is fine — the episode is already
-    #    excluded from future random selection regardless.
-    if publish.get("youtube_url") and not publish.get("youtube_error"):
-        posted_history.record(
-            guid=episode.get("guid"),
-            feed=feed_arg,
-            title=episode.get("title"),
-            youtube_url=publish["youtube_url"],
-        )
+    # 7) Manual-post checklist — no upload APIs, publishing is by hand.
+    _log_manual_post(video_path, slides)
 
     logger.info("Pipeline complete for: %s", episode.get("title"))
     return {
@@ -462,11 +372,10 @@ def _render_and_publish(
         "clip_end": ce,
         "video_path": video_path,
         "slides": slides,
-        "publish": publish,
     }
 
 
-def run_auto(privacy_status: str = "private") -> dict | None:
+def run_auto() -> dict | None:
     """Rotation entry point: pick today's feed and process a random unused episode.
 
     Resolves today's weekday against ``config.ROTATION`` and:
@@ -494,7 +403,7 @@ def run_auto(privacy_status: str = "private") -> dict | None:
     logger.info("Auto mode: %s -> feed '%s' (random episode)", _WEEKDAY_NAMES[weekday], feed_key)
 
     try:
-        return run(feed_key, privacy_status=privacy_status, interactive=False)
+        return run(feed_key, interactive=False)
     except RuntimeError as exc:
         logger.info("Auto mode: %s; nothing to do", exc)
         return None
@@ -580,7 +489,7 @@ def _print_bank_candidates(cands: list[dict]) -> None:
         print(f"     payoff : {c.get('payoff', '')}")
 
 
-def run_from_bank(privacy_status: str = "private", render_slides: bool = True) -> dict | None:
+def run_from_bank(render_slides: bool = True) -> dict | None:
     """``--bank``: review banked candidates across ALL feeds, pick one, render it.
 
     Presents up to ``config.BANK_REVIEW_COUNT`` available candidates (spacing
@@ -666,8 +575,7 @@ def run_from_bank(privacy_status: str = "private", render_slides: bool = True) -
         bg_basename = f"{chosen['basename']}_c{int(float(highlights['clip_start']))}"
         return _render_and_publish(
             chosen["feed"], episode, transcript, highlights,
-            privacy_status=privacy_status, render_slides=render_slides,
-            bg_basename=bg_basename,
+            render_slides=render_slides, bg_basename=bg_basename,
         )
 
 
@@ -685,37 +593,12 @@ def _print_summary(result: dict) -> None:
     for p in result["slides"]:
         print(f"              - {p}")
 
-    pub = result.get("publish", {})
     print(line)
-    print("PUBLISH")
-    print(line)
-
-    # YouTube
-    if pub.get("youtube_url"):
-        print(f"YouTube ({pub.get('privacy_status', '?')}) : {pub['youtube_url']}")
-    else:
-        print(f"YouTube     : FAILED — {pub.get('youtube_error') or 'not attempted'}")
-
-    # R2
-    if pub.get("r2_error"):
-        print(f"R2          : FAILED — {pub['r2_error']}")
-    else:
-        print(f"R2 video    : {pub.get('video_url') or '(none)'}")
-        if pub.get("slide_urls"):
-            print(f"R2 slides ({len(pub['slide_urls'])}):")
-            for u in pub["slide_urls"]:
-                print(f"              - {u}")
-
-    # Manual post checklist (Instagram + TikTok)
-    print("MANUAL POST (do by hand):")
-    print(f"  Reel/Video (local) : {result['video_path']}")
-    if pub.get("video_url"):
-        print(f"  Reel/Video (R2)    : {pub['video_url']}")
-    print("  Carousel slides    :")
+    print("MANUAL POST (all platforms, by hand):")
+    print(f"  Short/Reel video : {result['video_path']}")
+    print("  Carousel slides  :")
     for i, p in enumerate(result["slides"], 1):
-        print(f"    {i}. local: {p}")
-        if pub.get("slide_urls") and i - 1 < len(pub["slide_urls"]):
-            print(f"       R2   : {pub['slide_urls'][i - 1]}")
+        print(f"    {i}. {p}")
     print(line, flush=True)
 
 
@@ -785,12 +668,6 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--privacy",
-        choices=["private", "unlisted", "public"],
-        default="private",
-        help="YouTube visibility for the uploaded Short (default: private)",
-    )
-    parser.add_argument(
         "--no-slides",
         action="store_true",
         help="Skip the slide-carousel render; produce the karaoke video only. "
@@ -815,14 +692,12 @@ if __name__ == "__main__":
             scan_feed(args.feed, args.limit)
             sys.exit(0)
         elif args.bank:
-            result = run_from_bank(
-                privacy_status=args.privacy, render_slides=not args.no_slides
-            )
+            result = run_from_bank(render_slides=not args.no_slides)
             if result is None:
                 # Nothing rendered (empty bank or user exited the review).
                 sys.exit(0)
         elif args.auto:
-            result = run_auto(privacy_status=args.privacy)
+            result = run_auto()
             if result is None:
                 # Nothing to do (no posting day / already posted / feed down).
                 sys.exit(0)
@@ -832,13 +707,12 @@ if __name__ == "__main__":
             logger.info("Direct URL mode: %s", args.url)
             episode = rss_ingest.fetch_from_url(args.url, title=args.title)
             result = run(
-                "manual", episode=episode, privacy_status=args.privacy,
+                "manual", episode=episode,
                 render_slides=not args.no_slides, interactive=True,
             )
         else:
             result = run(
-                args.feed, privacy_status=args.privacy,
-                render_slides=not args.no_slides, interactive=True,
+                args.feed, render_slides=not args.no_slides, interactive=True,
             )
     except Exception:
         # Log the full traceback (the preceding "[n/7]" line shows which step

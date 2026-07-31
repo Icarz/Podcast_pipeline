@@ -186,14 +186,6 @@ CONTENT_GATE_MODEL = "claude-haiku-4-5-20251001"
 # successful YouTube upload. See modules/posted_history.py.
 POSTED_HISTORY_PATH = os.path.join(TMP_DIR, "posted_history.json")
 
-# Footage-history ledger: Pexels video ids used by PREVIOUS episodes, so a new
-# episode never re-pulls the same stock clip. See modules/pexels_bg.py. Capped to
-# the most-recent FOOTAGE_HISTORY_MAX ids (oldest evicted) so the file can't grow
-# unbounded and eventually starve every query of fresh candidates.
-FOOTAGE_HISTORY_PATH = os.path.join(TMP_DIR, "footage_history.json")
-FOOTAGE_HISTORY_MAX = 300   # cap; evict oldest ids beyond this
-FOOTAGE_HISTORY_TTL_DAYS = 30  # entries older than this re-enter the pool
-
 # --- HTTP ---
 # Browser-like headers so feeds/CDNs that block default clients still respond.
 BROWSER_HEADERS = {
@@ -208,11 +200,6 @@ BROWSER_HEADERS = {
 # --- Filename sanitization ---
 FEED_NAME_MAX_LEN = 40
 EPISODE_TITLE_MAX_LEN = 60
-
-# --- Clip / highlight length limits (seconds) ---
-CLIP_MIN_SECONDS = 15
-CLIP_MAX_SECONDS = 90
-MAX_CLIPS_PER_EPISODE = 5
 
 # --- AI extraction (Claude) ---
 # Requested claude-sonnet-4-20250514, but it 404s on this account (retired).
@@ -292,52 +279,8 @@ IMAGE_PROMPT_COUNT = 6
 # the model emits to exactly this sequence; image_gen maps each beat to a mood
 # line in the composed prompt.
 IMAGE_SCENE_BEATS = ["problem", "problem", "stakes", "reframe", "payoff", "payoff"]
-# LEGACY (2026-07-31): slides now reuse the generated wolf images; search_queries
-# was removed from ai_extract's schema. Kept only for slide_gen's legacy Pexels
-# path (old cached plans / the slide_gen __main__ harness).
-SEARCH_QUERY_COUNT = 5               # one art-directed stock-photo query per carousel slide
-# LEGACY (2026-07-31): ai_extract no longer emits `video_queries` — these
-# constants only serve pexels_bg's standalone harness / old cached plans.
-VIDEO_QUERY_COUNT = 4                # stock-VIDEO background SLOTS to actually fill
-VIDEO_QUERY_SPARE = 1                # extra backup query ai_extract emits as a fallback
-# What ai_extract emits: the 4 primary beats PLUS spare backups (5 total). pexels_bg
-# fills VIDEO_QUERY_COUNT slots and dips into the spare(s) when a query yields a
-# duplicate/empty result, so all 4 slots still get DISTINCT footage.
-VIDEO_QUERY_EXTRACT_COUNT = VIDEO_QUERY_COUNT + VIDEO_QUERY_SPARE
 IMAGE_ASPECT_RATIO = "9:16"          # vertical, matches the video frame
-BG_IMAGE_PREFIX = "bg_"             # tmp/bg_<n>.png  /  tmp/bg_<n>.mp4
-
-# --- Pexels stock video/photo (video search now unused by background.py; photo
-# search still feeds slide_gen.py's carousel slide backgrounds) ---
-PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
-# Photo search (still images for the carousel slide backgrounds).
-PEXELS_PHOTO_SEARCH_URL = "https://api.pexels.com/v1/search"
-PEXELS_PER_PAGE = 1
-# Video search pulls several candidates per query so duplicate clips (the same
-# Pexels video matching two different queries) can be skipped for the next one.
-PEXELS_VIDEO_PER_PAGE = 12
-# Orientations tried in order per query (portrait preferred for 9:16).
-PEXELS_ORIENTATIONS = ["portrait", "square", "landscape"]
-PEXELS_SIZE = "medium"
-PEXELS_TIMEOUT = 60                  # seconds per HTTP request
-PEXELS_BACKOFFS = [2, 4, 8, 16]      # waits between retries on 429 (free tier = 200 req/hr)
-
-# --- Background-clip QUALITY GATE (modules/bg_quality.py) ---
-# Post-fetch, pre-commit guardrails that inspect a candidate's Pexels poster
-# frames (the `video_pictures` previews — NO full download) and reject footage
-# the SYSTEM_PROMPT can ask against but can't actually see: too-dark/off-palette
-# shots, close-up/identifiable faces & group settings, and legible on-screen
-# text. `_find_video` skips a failing candidate and walks to the next of the
-# PEXELS_VIDEO_PER_PAGE results; if EVERY candidate fails it keeps the best one
-# as a last resort (a filled slot beats an empty one). Face/text checks need
-# opencv (opencv-python-headless); without it the gate degrades to brightness
-# only. Set BG_QUALITY_ENABLED=False to bypass entirely.
-BG_QUALITY_ENABLED = True
-BG_QUALITY_FRAMES = 4                # poster frames sampled per candidate (median/any-aggregated)
-BG_BRIGHTNESS_MIN = 42              # reject if MEDIAN frame luma (0-255) below this (dark/dim/off-palette)
-BG_FACE_AREA_MAX = 0.10            # reject if any one face bbox covers > this frac of the frame (close-up portrait)
-BG_FACE_COUNT_MAX = 1              # reject if more than this many faces detected in a frame (group/crowd/classroom)
-BG_TEXT_COVER_MAX = 0.045          # reject if text-like regions cover > this frac of the frame (signage/flipchart/book)
+BG_IMAGE_PREFIX = "bg_"             # tmp/<basename>_bg_<n>.png
 
 # Ken Burns + crossfade for the AI background montage.
 BG_CROSSFADE = 1.0                   # seconds of crossfade overlap between images
@@ -361,12 +304,6 @@ CAPTION_WORDS_PER_GROUP = 5              # max words shown at once
 CAPTION_GROUP_GAP = 0.7                  # a pause longer than this starts a new group
 CAPTION_CENTER_Y = 0.62                  # vertical center of caption block; kept above the Reels/Shorts bottom UI
 CAPTION_LINE_SPACING = 1.2
-
-# Hook text (top of frame, first few seconds only).
-HOOK_FONT_SIZE = 58
-HOOK_COLOR = "white"
-HOOK_DURATION = 3.0                  # seconds
-HOOK_TOP = 0.08                      # fraction of height
 
 # Brand name — single source of truth for the video watermark AND the slide
 # footer wordmark. Change it here; both renderers read from this constant.

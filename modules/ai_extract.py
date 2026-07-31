@@ -478,15 +478,12 @@ def _normalize_image_scenes(data: dict) -> None:
     data["wolf_outfit"] = outfit
 
 
-# Deterministic backstop for the NEVER DEPICT rules in SYSTEM_PROMPT. The model
-# follows the prompt most of the time but not always (it once produced "two men
-# diverging path golden hour" and "man standing still crowd passing dawn" in the
-# same run despite both being against the prompt's own rules) — Pexels/Pixabay
-# then return literal footage of exactly what was asked for, and the post-fetch
-# bg_quality gate can miss it too (its Haar face-detector doesn't see small or
-# distant faces in a wide crowd shot). This regex scan on the QUERY TEXT ITSELF
-# is cheap, has no false-negative risk from image quality, and catches the
-# failure at the earliest possible point — before a single Pexels call is made.
+# Deterministic backstop for the NEVER DEPICT rules. The model follows the
+# prompt most of the time but not always (in the Pexels era it produced "two
+# men diverging path golden hour" and "man standing still crowd passing dawn"
+# in the same run despite both being against the prompt's own rules). This
+# regex scan on the scene text itself is cheap and catches the failure at the
+# earliest possible point — before a single image is generated.
 _BANNED_SCENE_WORDS = re.compile(
     r"\b("
     r"crowd|crowds|congregation|gathering|protest|march|rally|parade|festival|"
