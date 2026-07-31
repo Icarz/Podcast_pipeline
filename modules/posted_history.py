@@ -5,11 +5,12 @@ keyed by the episode's RSS GUID, so the weekly rotation (``main.py --auto``) nev
 re-uploads an episode it has already published.
 
 Contract:
-  * shape: ``{"<guid>": {"feed", "title", "posted_at" (ISO 8601 UTC), "youtube_url"}}``
-  * ``record()`` is called ONLY after a successful YouTube upload — a failed
-    upload leaves no entry, so the next run retries the same episode.
+  * shape: ``{"<guid>": {"feed", "title", "used_at" (ISO 8601 UTC), ...}}`` —
+    older entries may carry ``posted_at``/``youtube_url`` fields from the
+    pre-2026-07-31 publish stage; they're preserved but no longer written.
+  * ``mark_used()`` retires an episode at render time and is the only writer.
   * read/write are both crash-safe: a missing or corrupt file reads as empty so
-    a bad log never breaks a scheduled run.
+    a bad log never breaks a run.
 """
 
 import json
