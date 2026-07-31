@@ -70,32 +70,6 @@ def mark_used(guid: str, feed: str, title: str) -> None:
     logger.info("Retired episode at render time: %r (guid=%s)", title, guid)
 
 
-def record(guid: str, feed: str, title: str, youtube_url: str) -> None:
-    """Set the YouTube URL on an already-retired episode after a successful upload.
-
-    The episode should already be in the log (written by :func:`mark_used` at
-    render time); this just stamps the ``youtube_url`` and ``posted_at`` fields.
-    Safe to call even if ``mark_used`` was somehow skipped — creates the entry.
-    No-op (with a warning) when ``guid`` is falsy.
-    """
-    if not guid:
-        logger.warning("No GUID for episode %r; NOT recording to posted history", title)
-        return
-    data = load()
-    entry = data.get(guid, {})
-    entry.update({
-        "feed": feed,
-        "title": title,
-        "posted_at": datetime.now(timezone.utc).isoformat(),
-        "youtube_url": youtube_url,
-    })
-    data[guid] = entry
-    os.makedirs(os.path.dirname(PATH), exist_ok=True)
-    with open(PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    logger.info("Recorded YouTube URL for episode: %r (guid=%s)", title, guid)
-
-
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     hist = load()
