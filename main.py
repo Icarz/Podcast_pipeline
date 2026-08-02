@@ -69,11 +69,11 @@ def _plan_cache_path(slug: str) -> str:
     return os.path.join(config.TMP_DIR, f"{slug}.plan.json")
 
 
-def generate() -> str:
+def generate(topic_hint: str | None = None) -> str:
     """Step 1: pick a topic, write the package, cache it, log it. Returns the
     slug so the caller can print the exact --render command."""
     logger.info("[1/2] Generating script (Claude %s)", config.EXTRACT_MODEL)
-    highlights = script_gen.generate_script_with_retry()
+    highlights = script_gen.generate_script_with_retry(topic_hint=topic_hint)
 
     slug = _slugify(highlights["title"])
     os.makedirs(config.TMP_DIR, exist_ok=True)
@@ -199,6 +199,12 @@ if __name__ == "__main__":
         action="store_true",
         help="With --render, skip the slide-carousel render; produce the karaoke video only.",
     )
+    parser.add_argument(
+        "--topic",
+        metavar="TOPIC",
+        help="Pin the script to a specific topic instead of letting Claude free-pick "
+        "one. Only used without --render. All brand/hook/content rules still apply.",
+    )
     args = parser.parse_args()
 
     try:
@@ -207,7 +213,7 @@ if __name__ == "__main__":
             result = render(slug, audio_path, render_slides=not args.no_slides)
             _print_summary(result)
         else:
-            generate()
+            generate(topic_hint=args.topic)
     except Exception:
         logger.exception("Pipeline FAILED")
         sys.exit(1)

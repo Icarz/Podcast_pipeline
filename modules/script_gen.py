@@ -62,19 +62,24 @@ SYSTEM_PROMPT = (
     "TOPIC SELECTION:\n"
     "You will be given the list of allowed topic_cluster values and a log of "
     "recently used topics. Pick ONE topic_cluster and a SPECIFIC concrete "
-    "topic within it. Favor these three clusters whenever a strong angle is "
-    "available -- they are proven top performers: fear_anxiety_rumination "
-    "(the single strongest recurring sub-topic), individuality_vs_conformity "
-    "(the courage to want more than the crowd finds acceptable), and "
+    "topic within it. Treat all five clusters as equally valid -- pick "
+    "whichever has the strongest angle for this run: fear_anxiety_rumination "
+    "(fear/anxiety/rumination mechanisms), individuality_vs_conformity "
+    "(the courage to want more than the crowd finds acceptable), "
     "money_as_freedom (money reframed as freedom/identity, never budgeting "
-    "advice). Do NOT pick the same topic_cluster as the most recently used "
-    "one. Never write a hook or title that substantially repeats a recent "
+    "advice), neurology_focus_motivation (brain/nervous-system mechanics, "
+    "focus, motivation), and identity_resilience_meaning (identity, "
+    "resilience, meaning/purpose). Do NOT pick the same topic_cluster as the "
+    "most recently used one. Never write a hook or title that substantially repeats a recent "
     "one -- pick a genuinely different angle.\n\n"
     "HOOK RULES -- these determine 90% of whether the clip gets views.\n\n"
-    "The hook MUST use a CONTRARIAN IDENTITY FRAME. It must challenge the "
-    "viewer's current behavior or worldview and imply they are on the wrong "
-    "side of a divide. The viewer should feel: 'wait -- am I doing this "
-    "wrong?'\n\n"
+    "The hook MUST use either a CONTRARIAN IDENTITY FRAME (it challenges the "
+    "viewer's current behavior or worldview and implies they are on the "
+    "wrong side of a divide -- 'wait, am I doing this wrong?') or a "
+    "SELF-CATEGORIZATION FRAME (it forces the viewer to sort themselves into "
+    "one of two sharply contrasting types -- 'wait, which one am I?'). Both "
+    "must make the viewer feel personally implicated within the first "
+    "sentence.\n\n"
     "WINNING FORMULA (use one of these structures):\n"
     "  - 'Your [brain/nervous system/body] [won't let go of/is addicted to/"
     "is hijacking you with] [common behavior] -- [until/unless] [condition]' "
@@ -82,6 +87,17 @@ SYSTEM_PROMPT = (
     "reveals a psychological/neurological mechanism acting on the viewer "
     "without their awareness. The mechanism must be immediately, viscerally "
     "felt -- not abstract -- so the payoff lands with almost no drop-off.\n"
+    "  - SELF-CATEGORIZATION TEST: '[Type A] or [Type B] -- which one are "
+    "you?' / 'Are you actually [Type A], or just [Type B]?'. Splits the "
+    "topic into two sharply contrasting patterns of mind or behavior (never "
+    "two people, never a relationship pairing) and forces the viewer to "
+    "self-sort. Both types must be instantly recognizable from a single "
+    "clause each -- the viewer must know which one they are within the "
+    "hook, not wait for the payoff. Use whenever the topic naturally splits "
+    "into two contrasting patterns; this is a proven top-tier hook mechanic "
+    "(self-categorization has driven 10x the engagement of straight advice "
+    "in comparable content) -- weight it as heavily as the default brain/"
+    "nervous-system formula above.\n"
     "  - 'You're [doing common thing] and it's [unexpected negative "
     "consequence]'\n"
     "  - '[Common belief] is a lie -- here's what [wise/successful people] "
@@ -117,16 +133,35 @@ SYSTEM_PROMPT = (
     "hears start to finish -- not a summary, not bullet points. Structure: "
     f"HOOK -> REFRAME (the mechanism/lens, made concrete and felt, not "
     "abstract) -> PAYOFF (a concrete, immediately actionable close -- "
-    "something the viewer can DO or SAY, not just a feeling). Target "
+    "something the viewer can DO or SAY, not just a feeling). If the hook "
+    "used the SELF-CATEGORIZATION FRAME, the REFRAME must clearly describe "
+    "BOTH types (so every viewer places themselves), and the PAYOFF must "
+    "give a concrete next step usable by whichever type the viewer is. "
+    "Target "
     f"{config.CLIP_WINDOW_MIN_SECONDS}-{config.CLIP_WINDOW_MAX_HARD_SECONDS} "
-    "seconds at natural spoken pace (roughly 110-150 words). Write in "
+    "seconds at natural spoken pace (roughly 90-"
+    f"{config.SCRIPT_MAX_WORDS} words). "
+    f"HARD CAP: the script must be {config.SCRIPT_MAX_WORDS} words or fewer "
+    "-- count as you write and cut before you exceed it, never after. Write in "
     "second person, direct address to the viewer. Never write stage "
     "directions, sound effects, or bracketed notes -- ``script`` is spoken "
     "words ONLY, exactly what a narrator would read aloud.\n\n"
+    "NAMED MECHANISM RULE: whenever the REFRAME rests on a real, "
+    "established psychological or behavioral phenomenon (e.g. cognitive "
+    "dissonance, loss aversion, the Zeigarnik effect, negativity bias, "
+    "sunk-cost fallacy, precommitment/Ulysses pacts, variable-reward "
+    "conditioning, attachment patterns), NAME it explicitly in the script "
+    "the first time it's introduced (\"This is called ___\" or equivalent). "
+    "A named mechanism reads as authoritative and gives the viewer language "
+    "for what's happening to them -- do not water a real, nameable "
+    "phenomenon down into a vague unnamed 'your brain does this' claim. "
+    "Never invent a fake-sounding scientific name for something that isn't "
+    "a real phenomenon; if no established term genuinely applies, describe "
+    "the mechanism plainly instead of forcing one.\n\n"
     "The JSON object must have exactly these keys:\n"
     '  "topic_cluster" : string -- one of the provided topic_cluster values.\n'
-    '  "hook"           : string -- a contrarian identity-frame hook, under '
-    "15 words. See HOOK RULES above.\n"
+    '  "hook"           : string -- a contrarian-identity-frame or '
+    "self-categorization-frame hook, under 15 words. See HOOK RULES above.\n"
     '  "script"         : string -- the full spoken narration. See SCRIPT '
     "WRITING RULES above.\n"
     '  "insights"       : array of exactly 3 strings -- the key takeaways, '
@@ -358,6 +393,14 @@ def _validate(data: dict) -> None:
     if not data["script"].strip():
         raise ValueError("'script' must be non-empty spoken narration")
 
+    script_word_count = len(data["script"].split())
+    if script_word_count > config.SCRIPT_MAX_WORDS:
+        raise ValueError(
+            f"'script' is {script_word_count} words, over the "
+            f"{config.SCRIPT_MAX_WORDS}-word hard cap (user directive: renders must "
+            "stay under 50s). Trim it."
+        )
+
     _normalize_image_scenes(data)
     _scene_safety_gate(data)
 
@@ -426,7 +469,7 @@ def is_metaphor_hook(hook: str) -> bool:
 
 def _history_context(recent_entries: list[dict]) -> str:
     if not recent_entries:
-        return "No prior scripts yet -- pick freely, favoring the top 3 clusters."
+        return "No prior scripts yet -- pick freely from all 5 clusters."
     lines = [
         f"- [{e.get('topic_cluster')}] {e.get('title')!r} (hook: {e.get('hook')!r})"
         for e in recent_entries
@@ -438,14 +481,27 @@ def _history_context(recent_entries: list[dict]) -> str:
     )
 
 
-def generate_script(recent_history: list[dict] | None = None) -> dict:
+def generate_script(recent_history: list[dict] | None = None, topic_hint: str | None = None) -> dict:
     """Pick a topic and write the full script + copy + art-direction package
     in one Claude call. Returns a dict with exactly: topic_cluster, hook,
     script, insights, key_line, title, hashtags, wolf_outfit, image_scenes,
     clip_start, clip_end (the last two are a fixed sentinel -- video_gen
-    clamps clip_end to the real audio duration at render time regardless)."""
+    clamps clip_end to the real audio duration at render time regardless).
+
+    ``topic_hint``, if given, pins the topic to a user-specified subject
+    instead of letting the model free-pick -- all other rules (hook
+    formula, brand gates, cluster taxonomy) still apply unchanged."""
+    topic_instruction = (
+        f"The user has requested this specific topic: {topic_hint!r}. Write "
+        "the script for this exact topic -- still pick whichever "
+        "topic_cluster fits it best from the list below, and still follow "
+        "every rule above (hook formula, brand mission, banned content).\n\n"
+        if topic_hint
+        else ""
+    )
     body = (
         f"Available topic clusters: {json.dumps(config.TOPIC_CLUSTERS)}\n\n"
+        f"{topic_instruction}"
         f"{_history_context(recent_history or [])}\n\n"
         "Write a new script now."
     )
@@ -482,7 +538,7 @@ def generate_script(recent_history: list[dict] | None = None) -> dict:
 _RETRY_SLEEP_S = 65  # sleep between attempts to clear the 1-min rate-limit window
 
 
-def generate_script_with_retry(attempts: int = 3) -> dict:
+def generate_script_with_retry(attempts: int = 3, topic_hint: str | None = None) -> dict:
     """Call :func:`generate_script` up to ``attempts`` times, tolerating the
     model's non-deterministic output. Re-fetches recent history each attempt
     (cheap, local) so a slow retry loop never works off a stale dedup view.
@@ -493,7 +549,7 @@ def generate_script_with_retry(attempts: int = 3) -> dict:
     last_exc: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
-            return generate_script(script_history.recent(8))
+            return generate_script(script_history.recent(8), topic_hint=topic_hint)
         except ValueError as exc:
             last_exc = exc
             logger.warning(

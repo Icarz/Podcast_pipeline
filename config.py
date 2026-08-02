@@ -30,10 +30,19 @@ EXTRACT_MAX_TOKENS = 4000  # headroom for the 6 image_scenes objects under the s
 # whatever the ElevenLabs voiceover comes out to; video_gen.build_video
 # already clamps clip_end to the actual audio duration regardless of what's
 # cached here (proven by the 2026-07-31 manual test: a 39.7s script rendered
-# clean with no floor enforcement needed). Capped at 58s so the finished
-# Short stays UNDER 60s -- YouTube blocks the music bed on Shorts >= 60s.
-CLIP_WINDOW_MIN_SECONDS = 45
-CLIP_WINDOW_MAX_HARD_SECONDS = 58
+# clean with no floor enforcement needed). Capped at 50s (user directive,
+# 2026-08-02: their ElevenLabs voiceovers must never cross 50s) -- tightened
+# down from the earlier 58s ("stay under the 60s YouTube music-bed cutoff")
+# cap, which left too little margin once ElevenLabs pacing is added on top.
+CLIP_WINDOW_MIN_SECONDS = 35
+CLIP_WINDOW_MAX_HARD_SECONDS = 50
+
+# Hard word-count ceiling for modules/script_gen.py's `script` field, enforced
+# in code (_validate raises past this, forcing a retry) rather than left as a
+# prompt-only target -- the model missed its old prompt-only target of ~150
+# words by generating a 154-word script, so a code-level gate is needed to
+# reliably keep renders under 50s. ~2.5-2.6 words/sec at natural spoken pace.
+SCRIPT_MAX_WORDS = 130
 
 # --- Slide dimensions (pixels) ---
 # Vertical 9:16 for Reels/Shorts; switch to 1920x1080 for landscape YouTube.
@@ -87,9 +96,9 @@ IMAGE_SCENE_BEATS = ["problem", "problem", "stakes", "reframe", "payoff", "payof
 # --- Script topic clusters (modules/script_gen.py) ---
 # Fixed taxonomy so modules/script_history.py's dedup ledger stays consistent
 # across runs. The model still free-picks a SPECIFIC topic each run; this only
-# tags which bucket it falls in. First 3 are the proven top performers (see
-# CLAUDE.md's content-performance data) and should be favored by the prompt;
-# the other 2 cover the rest of the content universe.
+# tags which bucket it falls in. All 5 are treated as equally valid picks by
+# the prompt -- see CLAUDE.md's content-performance data for historical
+# context, but it no longer biases selection.
 TOPIC_CLUSTERS = [
     "fear_anxiety_rumination",
     "individuality_vs_conformity",
