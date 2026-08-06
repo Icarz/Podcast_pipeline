@@ -21,10 +21,20 @@ LOG_FILE = os.path.join(LOGS_DIR, "pipeline.log")
 # claude-sonnet-5 (swapped from claude-sonnet-4-6 on 2026-07-31): the current
 # Sonnet — near-Opus quality on the judgment-heavy extraction/copywriting work,
 # same $3/$15 price class ($2/$10 intro through 2026-08-31). Drop-in for this
-# pipeline (no temperature/thinking/prefill used anywhere). NOTE: its tokenizer
-# yields ~30% more tokens for the same text, hence the max-tokens bump below.
+# pipeline (no temperature/prefill used anywhere). NOTE: its tokenizer yields
+# ~30% more tokens for the same text, hence the max-tokens bump below.
+# 2026-08-06: this call returns an internal `thinking` content block that
+# counts against the SAME max_tokens budget as the JSON text answer (no
+# `thinking` param is passed here -- observed directly via a diagnostic call:
+# stop_reason="max_tokens" with a thinking block and zero text output at the
+# old 4000 cap). A more analytically-demanding IMAGE_SCENES prompt (STEP 1's
+# script-anchor requirement) pushed thinking-token usage past that cap
+# consistently. Bumped to give headroom for thinking + the full 6-scene JSON
+# answer combined -- if generate_script_with_retry starts failing on
+# stop_reason="max_tokens" again, raise this further before suspecting the
+# prompt wording.
 EXTRACT_MODEL = "claude-sonnet-5"
-EXTRACT_MAX_TOKENS = 4000  # headroom for the 6 image_scenes objects under the sonnet-5 tokenizer
+EXTRACT_MAX_TOKENS = 8000  # thinking + the 6 image_scenes objects, sonnet-5 tokenizer
 # Target spoken duration for modules/script_gen.py's scripts, in seconds.
 # There is no transcript to snap to anymore -- the REAL, final duration is
 # whatever the ElevenLabs voiceover comes out to; video_gen.build_video
