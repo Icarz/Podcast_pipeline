@@ -124,9 +124,15 @@ SYSTEM_PROMPT = (
     "METAPHOR HOOK RULE: treat a hook built on a clever/abstract metaphor "
     "(e.g. 'Your fear is a GPS') as HIGH RISK for retention -- confirmed "
     "data shows these win on views but land in the worst retention tier "
-    "because the payoff never cashes out before the viewer leaves. Only use "
-    "a metaphor hook when the script's own first sentence after the hook "
-    "already states plainly what the metaphor means in practice.\n\n"
+    "(39% vs 68-69% for concrete hooks) because the payoff never cashes out "
+    "before the viewer leaves. If you use a metaphor hook, the script's "
+    "OPENING (within its first ~40 words, right after the hook lands) MUST "
+    "include an explicit plain-language bridge -- start that sentence with "
+    "'That means...', 'In other words...', 'In practice, that looks "
+    "like...', 'Translation:', or 'Put simply...' -- followed immediately "
+    "by the concrete, literal meaning, not another layer of metaphor. This "
+    "is enforced in code: a metaphor hook whose script opening has no such "
+    "bridge fails validation and the whole script is regenerated.\n\n"
     "The hook must be under 15 words.\n\n"
     "SCRIPT WRITING RULES:\n"
     "Write the FULL spoken narration as one continuous piece the viewer "
@@ -540,6 +546,38 @@ def is_metaphor_hook(hook: str) -> bool:
     return bool(_METAPHOR_HOOK_RE.search(hook or ""))
 
 
+_METAPHOR_BRIDGE_RE = re.compile(
+    r"\b(that means|in other words|in practice|translation|put simply|"
+    r"plainly|here'?s what that (?:actually )?means|what that means is)\b",
+    re.IGNORECASE,
+)
+
+
+def _metaphor_payoff_gate(data: dict) -> None:
+    """Raise ValueError if a metaphor hook doesn't cash out in plain language
+    near the top of the script. Makes the METAPHOR HOOK RULE prose guidance
+    structural: 2026-08 analytics showed 'Your Fear Is a GPS' pattern hooks
+    (metaphor, no immediate concrete unpack) land the worst retention in the
+    whole dataset (9-12% vs 50%+ for hooks that unpack immediately) despite
+    strong CTR -- confirmed again by "Low Self Esteem vs High Self Esteem --
+    One Word Gives It Away" (best CTR of its batch, worst retention)."""
+    hook = data.get("hook", "")
+    if not is_metaphor_hook(hook):
+        return
+    script = data.get("script", "")
+    opening = " ".join(script.split()[:40])
+    if not _METAPHOR_BRIDGE_RE.search(opening):
+        raise ValueError(
+            "METAPHOR PAYOFF GATE -- hook is metaphor-style "
+            f"({hook!r}) but the script's first ~40 words don't cash it out "
+            "in plain language (no bridge phrase like 'that means' / 'in "
+            "other words' / 'in practice' / 'translation'). Metaphor hooks "
+            "without an immediate concrete unpack are the confirmed worst "
+            "retention pattern in this channel's data -- rewrite with an "
+            "explicit bridge sentence right after the hook."
+        )
+
+
 def _history_context(recent_entries: list[dict]) -> str:
     if not recent_entries:
         return "No prior scripts yet -- pick freely from all 5 clusters."
@@ -603,6 +641,7 @@ def generate_script(recent_history: list[dict] | None = None, topic_hint: str | 
 
     _validate(parsed)
     _brand_gate(parsed)
+    _metaphor_payoff_gate(parsed)
 
     logger.info("Generated script | topic_cluster=%r title=%r", parsed.get("topic_cluster"), parsed.get("title"))
     return parsed

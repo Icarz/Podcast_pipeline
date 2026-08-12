@@ -42,7 +42,7 @@ Individuality vs conformity, dream-killing framed as self-betrayal.
 
 - [ ] The dream you shrank to keep other people comfortable
 - [ ] Playing small as a hidden safety strategy, not humility
-- [ ] The moment "practical" became the word you used to quit
+- [x] The moment "practical" became the word you used to quit — 2026-08-08, *'Practical' Is the Word You Use to Quit* (individuality_vs_conformity)
 - [ ] What conformity actually protects you from — and what it quietly costs
 - [ ] Approval-seeking as a slow trade of your version of success for the safe one
 
@@ -50,7 +50,7 @@ Individuality vs conformity, dream-killing framed as self-betrayal.
 
 Identity/drive, contrarian-identity frame around obsession vs comfort.
 
-- [ ] Comfort as the actual enemy of your goals — not laziness, not lack of talent
+- [x] Comfort as the actual enemy of your goals — not laziness, not lack of talent — 2026-08-12, *Comfort Isn't Rest -- It's Your Body Sabotaging Your Goals* (neurology_focus_motivation)
 - [ ] Passion vs obsession — why only one of them actually moves you
 - [ ] What obsessed people do differently in the boring, unglamorous middle
 - [ ] The moment discipline stops being a task and becomes your identity
