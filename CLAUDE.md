@@ -43,6 +43,7 @@ There is **no pytest suite**. Each module under `modules/` has a `__main__` smok
 .\venv\Scripts\python.exe -m modules.transcribe         # transcribe newest tmp/*.mp3
 .\venv\Scripts\python.exe -m modules.slide_gen          # render the deck from built-in SAMPLE_HIGHLIGHTS (no AI calls; solid backgrounds)
 .\venv\Scripts\python.exe -m modules.image_gen          # generate gpt-image-2/gradient backgrounds from cached plan (image_scenes -> composed prompts) — primary background source
+.\venv\Scripts\python.exe -m modules.thumbnail_gen       # render the 16:9 YouTube thumbnail (7th AI image + poster text) from the newest cached plan
 .\venv\Scripts\python.exe -m modules.video_gen          # render the newest cached script+audio pair (requires an existing tmp/<slug>.plan.json — run main.py --render first)
 ```
 
@@ -67,8 +68,8 @@ module bodies.
    (informed by `script_history.recent(8)`, drawn evenly from all 5 clusters —
    see Content direction below), and writes the full script + copy +
    art-direction package in one shot: `hook, script, insights, key_line,
-   title, hashtags, wolf_outfit, image_scenes[6]`. No transcript involved —
-   this is original narration, not an extraction.
+   title, thumbnail_text, hashtags, wolf_outfit, image_scenes[6]`. No
+   transcript involved — this is original narration, not an extraction.
 2. Writes `tmp/<slug>.script.txt` (the plain narration text — paste this into
    ElevenLabs) and caches the full package as `tmp/<slug>.plan.json`.
 3. `script_history.record(topic_cluster, hook, title)` — logs the topic to the
@@ -89,17 +90,23 @@ you've pasted the script into ElevenLabs and downloaded the audio:
    podcast name anymore).
 5. `slide_gen.build_slides(highlights, photo_paths=backgrounds)` — the 6-PNG
    carousel on the same wolf images.
-6. Prints a MANUAL-POST checklist of local file paths. **Publishing is fully
-   manual by user decision** — no YouTube/Meta/R2 upload code exists.
+6. `thumbnail_gen.build_thumbnail(highlights, basename=slug)` — a dedicated
+   7th image (added 2026-08-13) at YouTube's 1280×720, NOT part of the
+   6-image video/slide set (see Thumbnail generation below).
+7. Prints a MANUAL-POST checklist of local file paths, including the
+   thumbnail with an explicit reminder to upload it in YouTube Studio's
+   thumbnail placeholder. **Publishing is fully manual by user decision** —
+   no YouTube/Meta/R2 upload code exists.
 
 ### Data contracts (what each module produces/consumes now)
 
 - `transcribe.transcribe(audio_path)` → `{"text", "segments":[{start,end,text}], "words":[{word,start,end}]}` (Groq `whisper-large-v3`, word + segment granularity). Same module, same contract as before the migration — it's audio-source-agnostic, so pointing it at an ElevenLabs file instead of a podcast episode needed zero changes.
 - `script_gen.generate_script_with_retry(attempts=3)` → wraps `generate_script(recent_history)`, catching only `ValueError` (schema/brand-gate failure) and `anthropic.RateLimitError`, same 3-attempt/65s-sleep retry shape the old `extract_copy_with_retry` used. Returns exactly these keys:
-  `topic_cluster, hook, script, insights[3], key_line, title, hashtags[3-8], wolf_outfit, image_scenes[6], clip_start, clip_end`.
+  `topic_cluster, hook, script, insights[3], key_line, title, thumbnail_text, hashtags[3-8], wolf_outfit, image_scenes[6], clip_start, clip_end`.
   - `topic_cluster` is one of `config.TOPIC_CLUSTERS` (5 fixed buckets, all treated equally by the prompt: `fear_anxiety_rumination`, `individuality_vs_conformity`, `money_as_freedom`, `neurology_focus_motivation`, `identity_resilience_meaning`). Used only for the dedup ledger; the model still free-picks a specific topic each run.
   - `script` is the full spoken narration as one continuous piece (what gets written to `tmp/<slug>.script.txt`) — never bullet points, never stage directions.
   - `key_line` replaces the old `best_quote` — nothing is quoted from a real speaker anymore, so the field is named for what it actually is: a punchy written line for the QUOTE slide. Same "carved in stone" character bar as before.
+  - `thumbnail_text` (added 2026-08-13) is 2-5 words for the YouTube thumbnail's poster-style headline — deliberately separate from and shorter than `hook`/`title`, validated in `_validate()` (1-6 words). Rendered verbatim by `thumbnail_gen`, never paraphrased downstream. See Thumbnail generation below.
   - `clip_start`/`clip_end` are always the fixed sentinel `0.0`/`9999.0`, injected in code — there's no transcript window to compute, and `video_gen.build_video` already clamps to the real audio duration at render time regardless of what's cached (proven by the first manual test render).
   - `image_scenes` is a list of **6 objects** `{"beat", "concept", "action", "setting", "camera"}` — structured scene CONTENT for the illustrated backgrounds (the visual STYLE is applied later by `image_gen.compose_prompts`, see Background selection below). Beats follow the fixed story arc `config.IMAGE_SCENE_BEATS` = `[problem, problem, stakes, reframe, payoff, payoff]`, mapped onto 4 quarters of the **script** (not a transcript excerpt) via a mandatory STEP-1 content-analysis instruction in the prompt. `wolf_outfit` is ONE outfit worn unchanged across all 6 scenes. The SAME 6 images also back the entire slide carousel (see slide_gen below).
   - `_validate()` enforces types/counts (`insights` must have exactly 3 items, `topic_cluster` must be a known cluster) and normalizes `image_scenes` to exactly 6 via `_normalize_image_scenes()` (truncates extras, RAISES on a shortfall so the retry wrapper re-generates rather than padding — padding would duplicate images on screen). `_scene_safety_gate()` scans `action`/`setting` (never `concept`, which restates the script) for banned crowd/female/multi-person words — ported unchanged from the old `ai_extract.py`. `_brand_gate()` checks the hook uses a viewer-addressed identity frame and at least 2/3 insights are 2nd-person — also ported unchanged.
@@ -209,12 +216,24 @@ The returned list is **homogeneous**: always `.png` (image). `video_gen._backgro
 - Design system: yellow accent eyebrow with a tick bar, near-white auto-fitting body (`_fit_body` shrinks + re-wraps), persistent footer (wordmark + `TOTAL_SLIDES` (6) progress dots). Fonts: bundled DejaVu Sans Bold in `assets/fonts/` with Windows fallbacks.
 - Quote attribution is rendered **only if** the highlights dict actually carries one (`_attribution()` checks keys like `quote_author`/`speaker`); `script_gen`'s schema produces none, so the quote slide always shows no attribution — we never invent a speaker, and now there genuinely isn't one.
 
+### Thumbnail generation — dedicated 7th image (1280×720, 16:9)
+
+`modules/thumbnail_gen.py` (added 2026-08-13) renders the YouTube thumbnail: `build_thumbnail(highlights, basename=slug) -> str`. **Not part of the 6-image video/slide set** — a 7th AI image is generated specifically for it, because the 6 body-scene images are composed for the 9:16 video frame and reserve no headroom for text, and YouTube's 16:9 crop suits none of them well.
+
+- **Two-layer design, inspired by a competitor-style reference the user supplied:** giant chunky poster-style lettering over an illustrated hero shot. Split deliberately across two different generators:
+  - **Backdrop = AI image** (`image_gen.compose_thumbnail_prompt`): reuses the "stakes" beat's scene content (`image_gen.THUMBNAIL_SCENE_INDEX = 2`, the widest/most dramatic beat in the arc) but overrides the `camera` field with `THUMBNAIL_CAMERA` — the original scene's camera direction is written for the 9:16 frame and reads as an oddly bent/cropped pose once forced into 16:9 (confirmed by a real test render). `THUMBNAIL_HEADROOM_BLOCK` instructs the model to keep the top ~40% of the frame open and the wolf's head/shoulders below the vertical midline.
+  - **Headline = Pillow, never the AI model** (`thumbnail_gen._line_layer` etc.): the `thumbnail_text` field (2-5 words, see script_gen above) is drawn with bundled **Lilita One** (`assets/fonts/LilitaOne.ttf`, OFL-licensed, Windows `impact.ttf`/`arialbd.ttf` fallback), black fill + thick white stroke, auto-fit size (`_fit`, mirrors `slide_gen._fit_body`), each line rendered to its own transparent layer and rotated a few degrees on alternating lines (`LINE_ROTATIONS`) to fake a hand-lettered wave. **Deliberately not AI-rendered text** — the existing `NEGATIVE_BLOCK`/prop-text machinery exists precisely because image models garble/misspell exact wording, and a misspelled thumbnail headline is the one asset every viewer sees before clicking; a short background prop label is low-stakes, a full headline is not.
+- Generation is real-image-variance prone like the other 6 images (e.g. a test render 2026-08-13 came out with a human face instead of the wolf head on one roll) — there's no automated wolf-fidelity check anywhere in this pipeline yet, same accepted risk as the body-scene images; eyeball the thumbnail before uploading.
+- Falls back to a solid `config.VIDEO_BG_COLOR` background (never crashes) if the API key is missing or every retry fails, same degrade-never philosophy as `image_gen`'s other fallback path. Old cached `plan.json`s without `thumbnail_text` fall back to a trimmed `hook` instead of raising.
+- Output: `output/thumbnails/<slug>_thumbnail.png`. **No upload API** — `main.py`'s manual-post checklist prints an explicit reminder to upload it in YouTube Studio's thumbnail placeholder box, same fully-manual publishing philosophy as everything else.
+
 ### Caching to avoid burning API credits
 
 - `tmp/<slug>.script.txt` — the plain narration text written by `main.generate()`, for you to paste into ElevenLabs.
 - `tmp/<slug>.plan.json` = `{highlights}` — the full `script_gen` output, cached under the slugified title so `main.py --render <slug> <audio_path>` can pick it back up without re-hitting Claude.
 - `tmp/script_history.json` — the topic dedup ledger (see Architecture above). `record()` writes here immediately after step 1's package is built, so a topic is never regenerated even if step 2 never runs.
 - `image_gen` caches generated images as `tmp/<slug>_bg_<n>.png` (namespaced per script). Pass `force=True` to regenerate. A new script always generates fresh images; re-rendering the same slug reuses its own cache.
+- `image_gen` also caches the thumbnail's dedicated 7th image as `tmp/<slug>_bg_thumb.png` (`config.THUMBNAIL_BG_SUFFIX`) — separate from the `_bg_<n>.png` numbering since it isn't part of the 6-image set. The final composited PNG (image + poster text) lands in `output/thumbnails/`, not `tmp/`.
 - When iterating on rendering, rely on these caches rather than re-running `main.py` (which would burn a fresh Claude call for a new topic).
 
 ## External services & secrets
@@ -248,6 +267,7 @@ avatar/badge assets unasked, no ElevenLabs API integration (voiceover stays a
 manual paste-and-download step).
 
 Genuinely open:
+- **Judge the thumbnail's CTR impact once posted** — `thumbnail_gen.py` (added 2026-08-13) is new and unproven on a real upload; nothing about impressions/CTR lift is confirmed yet, only that the code path runs and the text-treatment style matches the reference the user supplied. Also watch for the wolf-head generation variance seen in testing (see Thumbnail generation above) — eyeball each thumbnail before uploading until there's a track record.
 - **Synthetic-script track is now posted and judged for real performance — RESOLVED.** As of 2026-08-12, "Comfort Isn't Rest — It's Your Body Sabotaging Your Goals" hit 62.9% native AVD on 1.3K real views (#1 of 10 ranked Shorts). See the Aug 13 addendum above and `docs/retention_log.md` for the causal breakdown.
 - **Validate the metaphor-payoff gate (`script_gen._metaphor_payoff_gate`, added 2026-08-12) end-to-end** — it has never actually fired against a real metaphor-style hook in a live render yet (the "Comfort Isn't Rest" win above predates the gate and isn't a metaphor hook anyway). Next time `is_metaphor_hook()` trips, check the generated bridge sentence reads naturally, not just that validation passes.
 - **ElevenLabs API integration** — deferred future upgrade: a `tts_gen.py` module calling ElevenLabs directly (with word-level timestamps from their API, dropping the `transcribe.py` step) once the manual flow is validated over more than a couple of renders.

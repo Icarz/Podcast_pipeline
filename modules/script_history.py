@@ -7,8 +7,10 @@ than the old ``posted_history.py``: no GUIDs, no used/rejected states -- just
 a flat, append-only log.
 
 Contract:
-  * shape: a JSON list of ``{"date", "topic_cluster", "hook", "title"}``,
-    newest last.
+  * shape: a JSON list of ``{"date", "topic_cluster", "hook", "title",
+    "wolf_outfit", "settings"}`` (the last two added 2026-08-13; older
+    entries simply lack the keys -- callers must use ``.get()``), newest
+    last.
   * ``record()`` is the only writer, called once by ``main.py`` right after
     ``script_gen``'s output is written to disk -- the topic is spent whether
     or not the render step ever runs, same timing philosophy as the old
@@ -48,14 +50,25 @@ def recent(limit: int = 8) -> list[dict]:
     return load()[-limit:]
 
 
-def record(topic_cluster: str, hook: str, title: str) -> None:
-    """Append a new entry."""
+def record(
+    topic_cluster: str,
+    hook: str,
+    title: str,
+    wolf_outfit: str = "",
+    settings: list[str] | None = None,
+) -> None:
+    """Append a new entry. ``wolf_outfit``/``settings`` are optional so old
+    call sites (and the __main__ harness) keep working -- they exist so
+    script_gen can steer future scripts away from repeating the same
+    outfit/location archetypes (see _history_context)."""
     data = load()
     data.append({
         "date": date.today().isoformat(),
         "topic_cluster": topic_cluster,
         "hook": hook,
         "title": title,
+        "wolf_outfit": wolf_outfit,
+        "settings": settings or [],
     })
     os.makedirs(os.path.dirname(PATH), exist_ok=True)
     with open(PATH, "w", encoding="utf-8") as f:
@@ -70,3 +83,7 @@ if __name__ == "__main__":
     print(f"Entries: {len(hist)}")
     for e in hist:
         print(f"  - [{e.get('topic_cluster')}] {e.get('title')!r} (hook: {e.get('hook')!r}, {e.get('date')})")
+        if e.get("wolf_outfit"):
+            print(f"      outfit: {e['wolf_outfit']!r}")
+        if e.get("settings"):
+            print(f"      settings: {e['settings']}")

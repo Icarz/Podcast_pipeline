@@ -194,6 +194,17 @@ SYSTEM_PROMPT = (
     "a wall. It must feel carved in stone -- timeless, defiant, memorable. "
     "Never merely wise or pleasant.\n"
     '  "title"          : string -- a punchy video title (<= 80 chars).\n'
+    '  "thumbnail_text" : string -- 2-5 words ONLY, for giant poster-style '
+    "lettering baked onto the YouTube thumbnail image (Pillow renders this "
+    "verbatim -- it is NOT paraphrased or shortened downstream, so get the "
+    "word count right here). This is NOT the hook or title reused/truncated "
+    "-- it's a separate, even more compressed gut-punch: the single sharpest "
+    "phrase from the script's core tension, legible at a glance in a tiny "
+    "feed thumbnail. Prefer a direct 2nd-person accusation or claim over a "
+    "generic label (GOOD: 'YOUR BRAIN IS LYING', 'STOP WAITING TO FEEL "
+    "READY' -- BAD: 'Motivation Tips', 'The Truth About Comfort'). Plain "
+    "words, no punctuation beyond a single question mark if truly needed, "
+    "ALL CAPS not required (rendered upper-case downstream regardless).\n"
     '  "hashtags"       : array of strings -- 3 to 8 relevant hashtags, '
     'each starting with "#".\n'
     '  "wolf_outfit"    : string -- ONE outfit for the illustrated wolf '
@@ -312,19 +323,33 @@ SYSTEM_PROMPT = (
     "it, spell out the EXACT words here (2-6 of them, never more) -- do "
     "not leave the wording to be invented downstream.\n"
     '  "setting" : string -- where it happens. VARY ACROSS ALL SCENES -- '
-    "never the same setting twice; lean OUT-IN-THE-WORLD (gym, sunlit "
-    "street, driving a car, rooftop, market, park bench, workshop, balcony, "
-    "bus stop) over domestic (home settings at most once per clip).\n"
+    "never the same setting twice; lean OUT-IN-THE-WORLD over domestic "
+    "(home settings at most once per clip). Draw from the FULL range below "
+    "rather than defaulting to the first few that come to mind -- rooftop-"
+    "with-skyline, park bench, and generic sunlit street are already "
+    "overused across past scripts, so reach for them last, not first: gym, "
+    "driving a car, market, workshop, balcony, bus stop, a warmly-lit city "
+    "street at night (glowing shop windows, golden streetlamps, string "
+    "lights or neon signage -- lively and inviting, never dark or "
+    "underlit), a hiking trail or nature path, an outdoor spot for playing "
+    "a musical instrument (busking corner, porch, campfire circle), "
+    "laundromat, ferry dock, subway platform, bakery counter, greenhouse, "
+    "skate park, community garden, train platform, bridge overlook.\n"
     '  "camera"  : string -- dynamic film-still framing: low/high angle, '
     "three-quarter view, through a window, tracking alongside a moving "
     "subject, strong foreground/background depth.\n\n"
     'WOLF_OUTFIT: ONE outfit of ordinary human clothes that plausibly works '
-    "in ALL of this script's settings, worn UNCHANGED in every scene. Feel "
-    "free to draw on the WOLF CHARACTER BACKGROUND above when it fits (gym/"
-    "CrossFit wear, a worn band tee, a plain smartwatch, hiking-ready "
-    "layers) if that reads better against this script's settings than a "
-    "generic outfit -- but it must still work across all 6 scenes "
-    "unchanged. No logos, no readable text on the clothing.\n"
+    "in ALL of this script's settings, worn UNCHANGED in every scene. Vary "
+    "the garment TYPE and silhouette, not just the color -- avoid "
+    "defaulting to a plain crewneck/henley top with dark joggers or jeans "
+    "and white sneakers, which is already overused across past scripts. "
+    "Consider a genuinely different category each time: a layered flannel "
+    "or jacket over a tee, a denim or canvas utility overshirt, hiking-"
+    "ready gear (boots, cargo pants, a technical jacket), gym/CrossFit "
+    "wear, a worn band tee, workwear (coveralls, an apron), a lightweight "
+    "rain shell, or smart-casual (collared shirt, chinos) -- whichever "
+    "reads best against this script's settings. No logos, no readable "
+    "text on the clothing.\n"
     "NEVER DEPICT (image scenes hard blacklist): no skull, skeleton, or "
     "death imagery; no cigarettes, alcohol, drugs, or vices; no slumped or "
     "defeated posture; no violence or gore; no crowds or extra figures of "
@@ -455,6 +480,7 @@ def _validate(data: dict) -> None:
         "insights": list,
         "key_line": str,
         "title": str,
+        "thumbnail_text": str,
         "hashtags": list,
         "wolf_outfit": str,
         "image_scenes": list,
@@ -485,6 +511,13 @@ def _validate(data: dict) -> None:
             f"'script' is {script_word_count} words, over the "
             f"{config.SCRIPT_MAX_WORDS}-word hard cap (user directive: renders must "
             "stay under 50s). Trim it."
+        )
+
+    thumb_words = data["thumbnail_text"].split()
+    if not (1 <= len(thumb_words) <= 6):
+        raise ValueError(
+            f"'thumbnail_text' must be 2-5 words (6 max), got {len(thumb_words)}: "
+            f"{data['thumbnail_text']!r}"
         )
 
     _normalize_image_scenes(data)
@@ -592,19 +625,47 @@ def _history_context(recent_entries: list[dict]) -> str:
         f"- [{e.get('topic_cluster')}] {e.get('title')!r} (hook: {e.get('hook')!r})"
         for e in recent_entries
     ]
-    return (
+    topic_block = (
         "Recently used topics, most recent LAST (do not repeat the last "
         "entry's topic_cluster; never reuse a hook/title close to any of "
         "these):\n" + "\n".join(lines)
     )
 
+    recent_outfits = [e["wolf_outfit"] for e in recent_entries if e.get("wolf_outfit")]
+    recent_settings: list[str] = []
+    for e in recent_entries:
+        recent_settings.extend(s for s in e.get("settings") or [] if s)
+
+    variety_lines = []
+    if recent_outfits:
+        outfit_list = "\n".join(f"  - {o}" for o in recent_outfits)
+        variety_lines.append(
+            "Recently used WOLF_OUTFITs -- pick a materially different "
+            "garment type and color from ALL of these (not just a color "
+            "swap on the same silhouette; e.g. don't follow another grey-"
+            f"top/dark-bottom/sneakers combo with yet another one):\n{outfit_list}"
+        )
+    if recent_settings:
+        setting_list = "\n".join(f"  - {s}" for s in recent_settings)
+        variety_lines.append(
+            "Recently used SETTINGs across those scripts -- avoid reusing "
+            "these location archetypes (especially rooftop-with-skyline, "
+            "park bench, and generic sunlit street, which are overused); "
+            f"lean into archetypes NOT on this list:\n{setting_list}"
+        )
+
+    if variety_lines:
+        topic_block += "\n\n" + "\n\n".join(variety_lines)
+    return topic_block
+
 
 def generate_script(recent_history: list[dict] | None = None, topic_hint: str | None = None) -> dict:
     """Pick a topic and write the full script + copy + art-direction package
     in one Claude call. Returns a dict with exactly: topic_cluster, hook,
-    script, insights, key_line, title, hashtags, wolf_outfit, image_scenes,
-    clip_start, clip_end (the last two are a fixed sentinel -- video_gen
-    clamps clip_end to the real audio duration at render time regardless).
+    script, insights, key_line, title, thumbnail_text, hashtags, wolf_outfit,
+    image_scenes, clip_start, clip_end (the last two are a fixed sentinel --
+    video_gen clamps clip_end to the real audio duration at render time
+    regardless).
 
     ``topic_hint``, if given, pins the topic to a user-specified subject
     instead of letting the model free-pick -- all other rules (hook
