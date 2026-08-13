@@ -35,6 +35,7 @@ to make that check a lookup instead of a manual spreadsheet reconstruction.
 
 | Date | Video ID | Title | Hook family | Topic cluster | Era | Dur(s) | Views | Impr. | CTR% | AVD% (proxy) | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-08-12 | TBD | Comfort Isnt Rest Its Your Body Sabotaging Your Goals | NEURO ("nervous system fights your goals") | neurology_focus_motivation | synthetic+aug2 | TBD | 1,300 | TBD | TBD | **62.9%*** | *native Studio "avg % viewed", not the watch-hours proxy — directly comparable to CLAUDE.md's 39-69% historical band. #1 of 10 ranked Shorts at 19h28m post-live, 23 likes. Video ID/duration/impressions/CTR not visible in the source screenshot — fill in from Studio when convenient. CORRECTED attribution: plan.json was written 2026-08-12 22:54, BEFORE the metaphor-payoff-gate commit (`2216fc6`, 23:42) landed — that gate was NOT active for this script and gets no credit here. What WAS active: the situation-first IMAGE_SCENES rewrite (`116d94f`, Aug 6) and the already-existing NEURO "force acting on you" hook default. Hook is not a metaphor (`is_metaphor_hook()` doesn't fire on it) — it's the plain-language default formula executed cleanly: named mechanism (homeostasis) + immediate 2nd-person concrete opening ("You think you're lazy. You're not.") + situation-first scenes (gym-door hesitation, desk drift, rooftop wind) instead of prop-first product shots. Best synthetic-era result to date. |
 | 2026-08-08 | ZmiVA6onzvI | Practical Is the Word You Use to Quit | CONTRARIAN-ID | identity_resilience_meaning | synthetic+aug2 | 54 | 5 | 4 | 0% | 26.4% | low-n |
 | 2026-08-07 | bKDQ5nkGDBI | Worry Isnt Protection Its a Spell Your Brain Casts | METAPHOR | fear_anxiety_rumination | synthetic+aug2 | 44 | 5 | 6 | 0% | 31.4% | low-n; check for bridge-phrase gate compliance retroactively |
 | 2026-08-06 | ow_1MRI0PFY | More Money Same Broke Feeling Pick Your Enough Number | CONTRARIAN-ID | money_as_freedom | synthetic+aug2 | 47 | 12 | 6 | 0% | 31.7% | low-n |
@@ -79,7 +80,39 @@ to make that check a lookup instead of a manual spreadsheet reconstruction.
 | 2026-06-07 | 3tYy45R-_Zk | The 3 Word Trick That Makes Personal Change Actually Stick | TACTIC | identity_resilience_meaning | podcast | 57 | 1 | 4 | 0% | 2.5% | n=1 |
 | 2026-06-07 | gwfVnz4uR5c | Opt Out of Modern Culture Before It Breaks You | CONTRARIAN-ID | individuality_vs_conformity | podcast | 55 | 1 | 26 | 3.85% | 18.3% | n=1 |
 
-## Reading this table (as of 2026-08-12)
+## Reading this table (as of 2026-08-13)
+
+- **Best synthetic-era result yet: "Comfort Isn't Rest" at 62.9% native AVD
+  (2026-08-12)**, on real reach (1.3K views, not low-n). It's a clean
+  execution of rules already in `script_gen.SYSTEM_PROMPT` — nothing new
+  was needed to produce it: NEURO default hook formula ("Your nervous
+  system fights your goals..."), the 2026-08-02 NAMED MECHANISM RULE
+  (homeostasis named explicitly), and an immediate 2nd-person concrete
+  opening with zero throat-clearing ("You think you're lazy. You're not.").
+  The situation-first IMAGE_SCENES rewrite (`116d94f`, landed Aug 6) was
+  also active — scenes read as real moments (gym-door hesitation, desk
+  drift, rooftop wind-resistance) instead of the pre-fix prop-first product
+  shots (compare "Willpower Isn't Character", generated Aug 4 before the
+  fix, which has a notepad and chalkboard held up facing camera —
+  19.0% AVD). Can't fully isolate the image-scene contribution from the
+  hook/script quality in this single data point, but it's consistent with
+  the fix's intent.
+- **Do not credit `2216fc6` (the metaphor-payoff gate) for this result** —
+  it was committed *after* this script was generated (see row note). That
+  gate is still functionally untested end-to-end; the next time a
+  metaphor-style hook actually fires `is_metaphor_hook()`, check that the
+  generated bridge sentence reads naturally and actually ships, not just
+  that validation passes.
+- **No new prompt change was needed to get this win** — the standing
+  WINNING FORMULA and NAMED MECHANISM RULE already cover it. The one
+  addition made afterward (2026-08-13) was folding the specific
+  "mechanism actively DEFENDS/PROTECTS the status quo against you"
+  framing (homeostasis / ego-depletion / amygdala-hijack shape) into the
+  WINNING FORMULA as an explicit alternative to the existing "won't let
+  go of / addicted to / hijacking" phrasing — same DEFAULT tier, additive,
+  not a replacement. Worth 2-3 more data points before treating it as
+  confirmed on its own (right now it's riding on the same hook that also
+  had the other proven ingredients).
 
 - **NEURO hooks with real sample size hold the strongest AVD%**: "Give Your
   Brain No Options" (63.8%, n=188), "Breaking Out of Modern Culture"
