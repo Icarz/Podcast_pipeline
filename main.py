@@ -10,9 +10,8 @@ Two-command flow, split around a manual ElevenLabs voiceover step:
     main.py --render <slug> <audio_path>
         Take the ElevenLabs audio you downloaded, transcribe it (Groq
         Whisper -- for word-level caption timestamps only, not content),
-        generate the 6 wolf background images, render the karaoke MP4, the
-        6-slide carousel, and a dedicated 16:9 YouTube thumbnail (a 7th AI
-        hero image with Pillow-drawn poster text on top).
+        generate the 6 wolf background images, render the karaoke MP4 and
+        the 6-slide carousel.
 
 Publishing is fully MANUAL by design: the run ends with a manual-post
 checklist of local file paths -- no upload APIs.
@@ -26,7 +25,7 @@ import sys
 from dotenv import load_dotenv
 
 import config
-from modules import background, script_gen, script_history, slide_gen, thumbnail_gen, transcribe, video_gen
+from modules import background, script_gen, script_history, slide_gen, transcribe, video_gen
 
 load_dotenv()
 
@@ -112,17 +111,13 @@ def generate(topic_hint: str | None = None) -> str:
     return slug
 
 
-def _log_manual_post(video_path: str, slides: list[str], thumbnail_path: str) -> None:
+def _log_manual_post(video_path: str, slides: list[str]) -> None:
     lines = [
         "MANUAL POST (all platforms, by hand):",
         f"  Short/Reel video : {video_path}",
         f"  Carousel slides ({len(slides)}):",
     ]
     lines += [f"    {i}. {p}" for i, p in enumerate(slides, 1)]
-    lines.append(
-        f"  YouTube thumbnail: {thumbnail_path}  <- upload this in YouTube "
-        "Studio's thumbnail placeholder box when you publish the Short"
-    )
     logger.info("\n".join(lines))
 
 
@@ -164,12 +159,9 @@ def render(slug: str, audio_path: str, render_slides: bool = True) -> dict:
         logger.info("Slides: skipped (--no-slides)")
         slides = []
 
-    logger.info("Thumbnail: render dedicated 16:9 hero image + poster text")
-    thumbnail_path = thumbnail_gen.build_thumbnail(highlights, basename=slug)
-
-    _log_manual_post(video_path, slides, thumbnail_path)
+    _log_manual_post(video_path, slides)
     logger.info("Pipeline complete for: %s", highlights.get("title"))
-    return {"highlights": highlights, "video_path": video_path, "slides": slides, "thumbnail_path": thumbnail_path}
+    return {"highlights": highlights, "video_path": video_path, "slides": slides}
 
 
 def _print_summary(result: dict) -> None:
@@ -184,15 +176,12 @@ def _print_summary(result: dict) -> None:
     print(f"Slides ({len(result['slides'])})  :")
     for p in result["slides"]:
         print(f"              - {p}")
-    print(f"Thumbnail   : {result['thumbnail_path']}")
     print(line)
     print("MANUAL POST (all platforms, by hand):")
     print(f"  Short/Reel video : {result['video_path']}")
     print("  Carousel slides  :")
     for i, p in enumerate(result["slides"], 1):
         print(f"    {i}. {p}")
-    print(f"  YouTube thumbnail: {result['thumbnail_path']}")
-    print("    -> upload this in YouTube Studio's thumbnail placeholder box")
     print(line, flush=True)
 
 

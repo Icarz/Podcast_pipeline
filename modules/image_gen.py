@@ -140,53 +140,6 @@ def compose_prompts(scenes: list[dict], outfit: str = "") -> list[str]:
     return prompts
 
 
-# Beat whose scene content backs the dedicated thumbnail image -- "stakes" is
-# written as the widest, most visually dramatic beat in the 6-scene arc (see
-# config.IMAGE_SCENE_BEATS), which reads better as a thumbnail hero shot than
-# the "problem" opener. 0-indexed into image_scenes.
-THUMBNAIL_SCENE_INDEX = 2
-
-# Reserves headroom for the Pillow-drawn poster-style thumbnail_text overlay
-# (see modules/thumbnail_gen.py) -- the AI image supplies the backdrop only,
-# never the text itself (image models garble/misspell exact wording; see
-# NEGATIVE_BLOCK's rationale above for why this codebase never trusts the
-# model with exact text beyond a short, spelled-out prop label).
-THUMBNAIL_HEADROOM_BLOCK = (
-    "Composition: this is a YouTube thumbnail hero shot, landscape framing. "
-    "Keep the top ~40% of the frame visually simple and uncluttered -- open "
-    "sky, a plain wall, blurred/soft background, or empty space -- with NO "
-    "busy detail, props, or text there; a large bold headline will be added "
-    "on top of that region afterward. The wolf's head and shoulders must "
-    "stay BELOW the vertical midline of the frame, fully clear of the top "
-    "40% -- never leaning, bending, or reaching upward into it. Do not "
-    "render any text, letters, or typography anywhere in the image."
-)
-
-# The source scene's "camera" field is written for the clip's 9:16 vertical
-# frame (e.g. "low angle looking up", "silhouette straining forward") and
-# reads as an oddly cropped, bent pose once forced into 16:9 -- confirmed by
-# a real test render 2026-08-13. Override framing for the thumbnail instead
-# of reusing it verbatim; keep the scene's concept/action/setting content.
-THUMBNAIL_CAMERA = (
-    "wide, stable, straight-on-to-three-quarter hero framing, landscape "
-    "16:9, the wolf standing upright and fully visible from head to feet "
-    "in the lower half of the frame, centered or slightly off-center, "
-    "generous open space above"
-)
-
-
-def compose_thumbnail_prompt(scene: dict, outfit: str = "") -> str:
-    """Build the single landscape thumbnail prompt from one image_scenes
-    entry (see THUMBNAIL_SCENE_INDEX) -- same style/outfit/negative-block
-    machinery as compose_prompts, with the camera direction overridden for
-    landscape framing (see THUMBNAIL_CAMERA) and THUMBNAIL_HEADROOM_BLOCK
-    appended so the Pillow-drawn headline in thumbnail_gen has clean space
-    to sit in."""
-    thumb_scene = dict(scene)
-    thumb_scene["camera"] = THUMBNAIL_CAMERA
-    return compose_prompts([thumb_scene], outfit)[0] + f" {THUMBNAIL_HEADROOM_BLOCK}"
-
-
 # Waits (seconds) between retries after a 429/5xx: up to 4 retries.
 RETRY_BACKOFFS = [2, 4, 8, 16]
 
@@ -278,19 +231,18 @@ def generate_backgrounds(
     Files are written to ``out_dir/<basename>_bg_<n>.png`` (1-indexed), or bare
     ``out_dir/bg_<n>.png`` when ``basename`` is omitted -- unless
     ``file_names`` is given, in which case those exact filenames are used
-    (1:1 with ``prompts``; for one-off images like the thumbnail that don't
-    fit the ``_bg_<n>`` numbering). Existing files are reused unless
-    ``force`` is True. **Always pass the episode's audio basename from
-    pipeline callers** — without it every episode collides on the same
-    filenames and silently reuses a previous episode's images regardless of
-    this run's ``image_prompts`` (the per-clip art direction would never
-    actually take effect). If a prompt can't be generated (missing key, rate
-    limit, error), a local gradient fallback is written so the pipeline
-    always has a full set of backgrounds and never crashes.
+    (1:1 with ``prompts``; for one-off images that don't fit the ``_bg_<n>``
+    numbering). Existing files are reused unless ``force`` is True. **Always
+    pass the episode's audio basename from pipeline callers** — without it
+    every episode collides on the same filenames and silently reuses a
+    previous episode's images regardless of this run's ``image_prompts``
+    (the per-clip art direction would never actually take effect). If a
+    prompt can't be generated (missing key, rate limit, error), a local
+    gradient fallback is written so the pipeline always has a full set of
+    backgrounds and never crashes.
 
     ``size``/``dims``: override the OpenAI request size and the local
-    gradient-fallback pixel dimensions together (e.g. for a landscape
-    thumbnail instead of the default portrait 9:16 set) -- default to
+    gradient-fallback pixel dimensions together -- default to
     ``config.OPENAI_IMAGE_SIZE`` / ``(SLIDE_WIDTH, SLIDE_HEIGHT)`` when
     omitted, so existing callers are unaffected.
     """

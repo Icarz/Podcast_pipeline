@@ -125,17 +125,6 @@ SCRIPT_HISTORY_PATH = os.path.join(TMP_DIR, "script_history.json")
 IMAGE_ASPECT_RATIO = "9:16"          # vertical, matches the video frame
 BG_IMAGE_PREFIX = "bg_"             # tmp/<basename>_bg_<n>.png
 
-# --- YouTube thumbnail (modules/thumbnail_gen.py, added 2026-08-13) ---
-# A dedicated 7th image, separate from the 6-image video/slide set: YouTube
-# wants 16:9, the other 6 are composed for the 9:16/4:5 video+carousel frame
-# and don't reserve headroom for poster-style text. Generated via the same
-# image_gen machinery with a landscape size override.
-THUMBNAIL_WIDTH = 1280
-THUMBNAIL_HEIGHT = 720
-THUMBNAIL_DIR = os.path.join(OUTPUT_DIR, "thumbnails")
-OPENAI_THUMBNAIL_IMAGE_SIZE = "1536x1024"  # landscape; closest gpt-image-2 size to 16:9
-THUMBNAIL_BG_SUFFIX = "_bg_thumb.png"      # tmp/<basename>_bg_thumb.png
-
 # Ken Burns + crossfade for the AI background montage.
 BG_CROSSFADE = 1.0                   # seconds of crossfade overlap between images
 BG_KENBURNS_ZOOM_FROM = 1.08         # start scale; margin (1080*.08/2=43px) > pan so edges never show

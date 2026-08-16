@@ -41,7 +41,7 @@ Money as an identity-stakes freedom vehicle — proof numbered/rules hooks work 
 Individuality vs conformity, dream-killing framed as self-betrayal.
 
 - [ ] The dream you shrank to keep other people comfortable
-- [ ] Playing small as a hidden safety strategy, not humility
+- [x] Playing small as a hidden safety strategy, not humility — 2026-08-13, *Playing Small Isn't Humility — It's Your Brain Hiding You* (identity_resilience_meaning)
 - [x] The moment "practical" became the word you used to quit — 2026-08-08, *'Practical' Is the Word You Use to Quit* (individuality_vs_conformity)
 - [ ] What conformity actually protects you from — and what it quietly costs
 - [ ] Approval-seeking as a slow trade of your version of success for the safe one

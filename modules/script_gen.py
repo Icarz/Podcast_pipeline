@@ -194,17 +194,6 @@ SYSTEM_PROMPT = (
     "a wall. It must feel carved in stone -- timeless, defiant, memorable. "
     "Never merely wise or pleasant.\n"
     '  "title"          : string -- a punchy video title (<= 80 chars).\n'
-    '  "thumbnail_text" : string -- 2-5 words ONLY, for giant poster-style '
-    "lettering baked onto the YouTube thumbnail image (Pillow renders this "
-    "verbatim -- it is NOT paraphrased or shortened downstream, so get the "
-    "word count right here). This is NOT the hook or title reused/truncated "
-    "-- it's a separate, even more compressed gut-punch: the single sharpest "
-    "phrase from the script's core tension, legible at a glance in a tiny "
-    "feed thumbnail. Prefer a direct 2nd-person accusation or claim over a "
-    "generic label (GOOD: 'YOUR BRAIN IS LYING', 'STOP WAITING TO FEEL "
-    "READY' -- BAD: 'Motivation Tips', 'The Truth About Comfort'). Plain "
-    "words, no punctuation beyond a single question mark if truly needed, "
-    "ALL CAPS not required (rendered upper-case downstream regardless).\n"
     '  "hashtags"       : array of strings -- 3 to 8 relevant hashtags, '
     'each starting with "#".\n'
     '  "wolf_outfit"    : string -- ONE outfit for the illustrated wolf '
@@ -480,7 +469,6 @@ def _validate(data: dict) -> None:
         "insights": list,
         "key_line": str,
         "title": str,
-        "thumbnail_text": str,
         "hashtags": list,
         "wolf_outfit": str,
         "image_scenes": list,
@@ -511,13 +499,6 @@ def _validate(data: dict) -> None:
             f"'script' is {script_word_count} words, over the "
             f"{config.SCRIPT_MAX_WORDS}-word hard cap (user directive: renders must "
             "stay under 50s). Trim it."
-        )
-
-    thumb_words = data["thumbnail_text"].split()
-    if not (1 <= len(thumb_words) <= 6):
-        raise ValueError(
-            f"'thumbnail_text' must be 2-5 words (6 max), got {len(thumb_words)}: "
-            f"{data['thumbnail_text']!r}"
         )
 
     _normalize_image_scenes(data)
@@ -662,10 +643,9 @@ def _history_context(recent_entries: list[dict]) -> str:
 def generate_script(recent_history: list[dict] | None = None, topic_hint: str | None = None) -> dict:
     """Pick a topic and write the full script + copy + art-direction package
     in one Claude call. Returns a dict with exactly: topic_cluster, hook,
-    script, insights, key_line, title, thumbnail_text, hashtags, wolf_outfit,
-    image_scenes, clip_start, clip_end (the last two are a fixed sentinel --
-    video_gen clamps clip_end to the real audio duration at render time
-    regardless).
+    script, insights, key_line, title, hashtags, wolf_outfit, image_scenes,
+    clip_start, clip_end (the last two are a fixed sentinel -- video_gen
+    clamps clip_end to the real audio duration at render time regardless).
 
     ``topic_hint``, if given, pins the topic to a user-specified subject
     instead of letting the model free-pick -- all other rules (hook
