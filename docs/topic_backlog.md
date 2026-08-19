@@ -22,7 +22,7 @@ Fear reframed as directional signal, not a threat to suppress.
 
 - [ ] Fear as a compass — what you avoid points straight at what you actually want
 - [ ] Reading the signal vs reacting to the static — separating real fear from habitual fear
-- [ ] The fear that shows up right before growth (a different kind than danger-fear)
+- [x] The fear that shows up right before growth (a different kind than danger-fear) — 2026-08-16, *The Fear Before Growth Isn't a Warning -- It's a Glitch* (fear_anxiety_rumination)
 - [ ] Physical fear signals (racing heart, tight chest) as data, not a verdict
 - [ ] Using fear as a decision filter — the choice that scares you correctly vs incorrectly
 
